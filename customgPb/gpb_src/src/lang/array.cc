@@ -79,4 +79,11 @@ void array_initialize(unsigned long size, long double* data) {
       data[n] = 0;
 }
 
+ostream &operator << (ostream &out, const array<double> &a) {
+	for (unsigned long n = 0; n < a.size(); n++) {
+		out << a[n] << ", ";
+	}
+	return out;
+}
+
 } /* namespace lang */

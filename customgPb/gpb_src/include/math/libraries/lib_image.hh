@@ -17,6 +17,7 @@
 #include "math/matrices/matrix.hh"
 #include "math/matrices/cmatrix.hh"
 #include "math/matrices/functors/matrix_distance_functors.hh"
+#include "math/matrices/functors/matrix_dispersion_functors.hh"
 #include "mlearning/clustering/clusterers/abstract/centroid_clusterer.hh"
 
 namespace math {
@@ -36,6 +37,8 @@ using math::geometry::triangulation;
 using math::matrices::matrix;
 using math::matrices::cmatrix;
 using math::matrices::functors::matrix_distance_functors;
+using math::matrices::functors::dispersion_functor;
+using math::matrices::functors::dispersion_functors;
 using mlearning::clustering::clusterers::abstract::centroid_clusterer;
 
 /*
@@ -1038,6 +1041,74 @@ public:
       const distanceable_functor<matrix<>,double>& =
          matrix_distance_functors<>::X2_distance() /* histogram distance */
    );
+   
+    typedef array_list<matrix<> > t_1d_matrices;
+	typedef auto_collection<matrix<>, t_1d_matrices> t_auto_1d_matrices;
+	typedef array_list<t_auto_1d_matrices> t_2d_matrices;
+	typedef auto_collection<t_auto_1d_matrices,	t_2d_matrices> t_auto_2d_matrices;
+   
+   /******************
+    * Optimal Junction Finding
+    * Added by Richard Lee
+    ******************/
+   static void pick_angles_exp(
+	//not const because gets used to calculate running sums
+	t_2d_matrices &,
+		//histograms of slices that are quantized and we want to take differences for
+	const matrix<> &,				//positive channel sums
+	const array<double> &,			//channel weights
+	double,			//channel weights for positive channels
+	unsigned long,
+		//min (inclusive) number of angles to try. 1 means discard if whole thing is homogeneous. should not be lower than 1
+	unsigned long,					//max (inclusive) number of angles to try. should not be smaller than min
+	array<double> &,				//output best angles
+	double &,						//output histogram difference score
+	const matrix<>& = matrix<>(),	//smoothing kernel for histogram
+	const distanceable_functor<matrix<>, double> & = //function for hist diffs
+		matrix_distance_functors<>::X2_distance());
+    
+   static void compute_pj_exp(
+		const array_list<matrix<unsigned long> > &,			//normal channels quantized
+		const matrix<double> &,		//positive channel: output of an edge detector that should just be added up instead of maximizing distance and homogeneity
+		const matrix<double> &,		//orientation information for positive channel (like for edgels)
+		const array<double> &,			//channel weights for normal channels
+		double,			//channel weights for positive channels
+		unsigned long,					//radius of window for deciding if point is worth analyzing
+		double,							//threshold for if point is worth analyzing
+   		unsigned long,					//number of slices
+   		unsigned long,					//number of slices in the orientation info for positive channel
+   		unsigned long,					//radius of window (support)
+   		unsigned long,					//min number of angles
+   		unsigned long,					//max number of angles
+   		unsigned long,			//TODO hist_length, stopgap measure
+   		matrix<> &,						//output probability of junction
+   		matrix< array<double> > &,		//output optimal angles, array does not need to be allocated. if min_n_angles != max_n_angles, the arrays may be of different sizes
+   		matrix<> &,						//output probability that we want to look there, just for debugging
+		const matrix<>& = matrix<>(),	//smoothing kernel for histogram
+		const distanceable_functor<matrix<>,double>& =	//function for hist diffs
+			matrix_distance_functors<>::X2_distance());
+		
+	static void pick_angles_homog(
+		array_list<matrix<> > &,		//histograms of slices, gets converted into running sums
+		unsigned long,					//max number of angles to try
+		matrix<double> &,				//best_costs, allocated space to be used
+		matrix<long> &,		//best_indices, allocated space to be used
+		array<double> &,				//output best angles
+		double &,						//output total cost
+		const matrix<> & = matrix<>(),	//smoothing kernel for histogram
+		const dispersion_functor<collection<matrix<double> > > & =
+			dispersion_functors<double>::coll_matrix_var_L2());	//function to compute statistical dispersion
+	
+	//find junctions based on histogram homogeneity instead of diffs
+	static void compute_pj_homog(
+		const matrix<unsigned long> &,	//the quantized image
+		unsigned long,					//number of slices
+		unsigned long,					//radius of window (support)
+		unsigned long,					//max number of angles to find at each point
+		matrix<> &,						//output probability of junction at each point
+		matrix<array<double> > &,		//output optimal angles at each point
+		const matrix<> & = matrix<>(),	//smoothing kernel for histogram
+		const dispersion_functor<collection<matrix<double> > > & = dispersion_functors<double>::coll_matrix_var_L2());	//function for statistical dispersion
 
    /*
     * Combine oriented gradients of histograms into a single gradient map.

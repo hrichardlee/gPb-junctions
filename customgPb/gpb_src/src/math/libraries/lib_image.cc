@@ -3023,8 +3023,10 @@ matrix<bool> region_mask_annulus(unsigned long r_inner, unsigned long r_outer)
 
 /*
  * Construct weight matrix for circular disc of the given radius.
+ * Optionally leave the central point out (I think default should be true, but
+ * don't want to break legacy code)
  */
-matrix<> weight_matrix_disc(unsigned long r) {
+matrix<> weight_matrix_disc(unsigned long r, bool middle_hole = false) {
    /* initialize matrix */
    unsigned long size = 2*r + 1;
    matrix<> weights(size, size);
@@ -3043,8 +3045,13 @@ matrix<> weight_matrix_disc(unsigned long r) {
          ind++;
       }
    }
+   
+   if (middle_hole)
+      weights(radius, radius) = 0;
+   
    return weights;
 }
+
 
 /*
  * Construct orientation slice lookup map.
@@ -3076,6 +3083,60 @@ matrix<unsigned long> orientation_slice_map(
       x++;
    }
    return slice_map;
+}
+
+/*
+ * Construct orientation slice lookup map, have slices go all the way
+ * around instead of mirroring across origin
+ */
+matrix<unsigned long> half_orientation_slice_map(
+   unsigned long size_x, unsigned long size_y, unsigned long n_ori)
+{
+   /* initialize map */
+   matrix<unsigned long> slice_map(size_x, size_y);
+   /* compute orientation of each element from center */
+   unsigned long ind = 0;
+   double x = -static_cast<double>(size_x - 1)/2;
+   for (unsigned long n_x = 0; n_x < size_x; n_x++) {
+      double y = -static_cast<double>(size_y - 1)/2;
+      for (unsigned long n_y = 0; n_y < size_y; n_y++) {
+         /* compute orientation index */
+         double ori = std::atan2(y, x) + M_PIl;
+         long idx = static_cast<long>(
+            math::ceil(ori / (2 * M_PIl) * static_cast<double>(n_ori))
+         ) - 1;
+         
+         slice_map[ind] = idx;
+         /* increment position */
+         ind++;
+         y++;
+      }
+      /* increment x-coordinate */
+      x++;
+   }
+   return slice_map;
+}
+
+/*
+ * Slice map, but offsets by half a slice in the negative direction
+ */
+matrix<unsigned long> half_orientation_slice_map_offset(
+	unsigned long size_x, unsigned long size_y, unsigned long n_ori)
+{
+	matrix<unsigned long> slice_map =
+		half_orientation_slice_map(size_x, size_y, n_ori * 2);
+	for (unsigned long x = 0; x < size_x; x++) {
+	for (unsigned long y = 0; y < size_y; y++) {
+		if (slice_map(x, y) % 2 == 0)
+			slice_map(x, y) /= 2;
+		else if (slice_map(x, y) == 2 * n_ori - 1)
+			slice_map(x, y) = 0;
+		else
+			slice_map(x, y) = (slice_map(x, y) + 1) / 2;
+	}
+	}
+	
+	return slice_map;
 }
 
 /*
@@ -3749,6 +3810,683 @@ auto_collection< matrix<>, array_list< matrix<> > > lib_image::hist_gradient_2D(
    );
    return gradients;
 }
+
+template <class T>
+matrix<T> &get2dEl(array_list<auto_collection< matrix<T>, array_list<matrix<T> > > > &coll,
+	unsigned long ind1, unsigned long ind2)
+{
+	return (*(coll[ind1]))[ind2];
+}
+
+using std::cout;
+using std::endl;
+
+// given histograms, pick three angles to partition them the best way
+// Added by Richard Lee
+void lib_image::pick_angles_exp(
+	t_2d_matrices &slice_hists,		//not const because gets used to calculate running sums
+	const matrix<> &pos_sums,		//positive channels like output of edge detector
+	const array<double> &channel_weights,
+	double pos_channel_weight,
+	unsigned long min_n_out_angles,		//1 means discard if homogeneous
+	unsigned long max_n_out_angles,
+	array<double> &angles,
+	double &pj,
+	const matrix<> &smoothing_kernel,
+	const distanceable_functor<matrix<>, double> &f_dist)
+{
+	bool debug = false;
+	
+	//TODO assume that min_n_out_angles >= 1, and min_n_out_angles <= max_n_out_angles
+
+	//assume that n_out_angles < n_angles; or else it doesn't really make sense
+	//also assume slice_hists.size == channel_weights.size()
+	unsigned long n_channels = slice_hists.size();
+	unsigned long n_slices = pos_sums.size();
+	array<unsigned long> hist_dim;
+	if (n_channels > 0) {
+		hist_dim = (*(slice_hists[0]))[0].dimensions();
+	}
+	
+	//recall that pos_sums gets indexed into by (i_pos_chan, i_slice)
+	
+	//turn slice_hists and pos_channel into running sums
+	//outer index is channel index, inner index is slice index
+	for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+		for (unsigned long i_slice = 1; i_slice < n_slices; i_slice++) {
+			get2dEl(slice_hists, i_chan, i_slice) +=
+				get2dEl(slice_hists, i_chan, i_slice - 1);
+		}
+	}
+	
+	//allocate space for histograms
+	t_auto_2d_matrices curr_hists_p(new array_list<t_auto_1d_matrices>());
+	for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+		auto_ptr<t_auto_1d_matrices> chan_ptr(
+			new t_auto_1d_matrices(new array_list< matrix<> >()));
+		for (unsigned long i_out_angle = 0; i_out_angle < max_n_out_angles; i_out_angle++) {
+			auto_ptr<matrix<> > angle_ptr(new matrix<>(hist_dim));
+			(**chan_ptr).add(*angle_ptr);
+			angle_ptr.release();	
+		}
+		curr_hists_p->add(*chan_ptr);
+		chan_ptr.release();
+	}
+	t_2d_matrices &curr_hists = *curr_hists_p;
+	
+	//prep for smoothing
+	bool use_smoothing = (!(smoothing_kernel.is_empty())) && (n_channels > 0);
+	matrix<> temp_conv(hist_dim);
+	
+	//best angles
+	array<unsigned long> best_angles(max_n_out_angles);
+	array<unsigned long> curr_angles(max_n_out_angles);
+	
+	double best_score = 0;
+	unsigned long best_n_angles = 0;
+	
+	for (unsigned long n_out_angles = min_n_out_angles;
+		n_out_angles <= max_n_out_angles;
+		n_out_angles++)
+	{
+		//TODO handle case where min_n_out_angles == 1
+	
+		//initialize angles
+		for (unsigned long i = 0; i < n_out_angles; i++) {
+			curr_angles[i] = i;
+		}
+		
+		//main loop, iterate through every possible combination of angles
+		bool done = false;
+		while (!done) {
+			//compute histograms for current angles
+			//last angle is all the ones before the first angle and all the ones
+			//after the last angle
+			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+				get2dEl(curr_hists, i_chan, n_out_angles - 1) =
+					get2dEl(slice_hists, i_chan, n_slices - 1) -
+					get2dEl(slice_hists, i_chan, curr_angles[n_out_angles - 1] - 1) +
+					(curr_angles[0] > 0
+						? get2dEl(slice_hists, i_chan, curr_angles[0] - 1)
+						: matrix<>::zeros(hist_dim));
+			}
+			//compute histograms for current angles, other than last angle
+			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+				for (unsigned long i_angle = 0; i_angle < n_out_angles - 1; i_angle++) {
+					if (curr_angles[i_angle] == 0) {
+						get2dEl(curr_hists, i_chan, i_angle) =
+							get2dEl(slice_hists, i_chan, curr_angles[i_angle + 1] - 1);
+					} else {
+						get2dEl(curr_hists, i_chan, i_angle) =
+							get2dEl(slice_hists, i_chan, curr_angles[i_angle + 1] - 1)
+							- get2dEl(slice_hists, i_chan, curr_angles[i_angle] - 1);
+					}
+				}
+			}
+			//smooth histogram bins
+			if (use_smoothing) {
+				for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+					for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
+						matrix<> &sh = get2dEl(curr_hists, i_chan, i_angle);
+						temp_conv.fill(0);
+						conv_in_place_1D(sh, smoothing_kernel, temp_conv);
+						for (unsigned long n_bin = 0; n_bin < sh.size(); n_bin++) {
+							sh[n_bin] = temp_conv[n_bin];
+						}
+					}
+				}
+			}
+			//L1 normalize bins
+			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+				for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
+					double sum_hist = sum(get2dEl(curr_hists, i_chan, i_angle));
+					if (sum_hist != 0)
+						get2dEl(curr_hists, i_chan, i_angle) /= sum_hist;
+				}
+			}
+		
+			//now compute score
+			double curr_score = 0;
+			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+				//difference between first and last histograms
+				curr_score +=
+					channel_weights[i_chan] *
+					f_dist(get2dEl(curr_hists, i_chan, n_out_angles - 1),
+						get2dEl(curr_hists, i_chan, 0));
+				for (unsigned long i_angle = 0; i_angle < n_out_angles - 1; i_angle++) {
+					//differences between histograms
+					curr_score +=
+						channel_weights[i_chan] *
+						f_dist(get2dEl(curr_hists, i_chan, i_angle),
+							get2dEl(curr_hists, i_chan, i_angle + 1));
+				}
+			}
+			for (unsigned long i_angle = 0; i_angle < n_out_angles - 1; i_angle++) {
+				//values in pos_sums
+				//unsigned long prevang = curr_angles[i_angle] == 0 ? n_slices - 1 : curr_angles[i_angle] - 1;
+				curr_score +=
+					pos_channel_weight * pos_sums(0, curr_angles[i_angle]);
+			}
+			//normalize by number of angles
+			//TODO better normalization possible?
+			curr_score /= n_out_angles;
+		
+			//see if our angles are best now
+			if (curr_score > best_score) {
+				best_score = curr_score;
+				best_angles = curr_angles;
+				best_n_angles = n_out_angles;
+			}
+		
+			if (debug)
+				std::cout << "angles: " << curr_angles
+					<< " score: " << curr_score << std::endl;
+		
+			//now update angles
+			//go backwards through the angles to see which one to increment
+			//weird loop condition becaues of unsigned long
+			for (unsigned long ch_angle = n_out_angles - 1;
+				ch_angle < n_out_angles; ch_angle--)
+			{
+				//we want the angles to be maximally n_angles - 1
+				if (curr_angles[ch_angle] < n_slices - (n_out_angles) + ch_angle) {
+					curr_angles[ch_angle]++;
+					//if we change one in the middle, we should reset all of the ones after
+					for (unsigned long i = 1; i + ch_angle < n_out_angles; i++) {
+						curr_angles[ch_angle + i] = curr_angles[ch_angle] + i;
+					}
+					done = false;
+					break;
+				} else {
+					done = true;
+				}
+			}
+		}
+	}
+	
+	pj = best_score;
+	double convertFactor = 2 * M_PIl / n_slices;
+	angles.resize(best_n_angles);
+	for (unsigned long i_angle = 0; i_angle < best_n_angles; i_angle++) {
+		//convert from best_angles, which is a slice index, to an actual angle
+		angles[i_angle] = convertFactor * best_angles[i_angle];
+	}
+}
+
+// Computes histograms and histogram differences at each location
+// Added by Richard Lee
+void lib_image::compute_pj_exp(
+	const array_list<matrix<unsigned long> > &labels,
+		//the image quantized, indexed by channel, normal channels where we maximize differences and homogeneity
+	const matrix<double> &pos_channel,
+		//positive channel: edge output that should just be summed and added to the score
+	const matrix<double> &pos_channel_ori,	//orientation information for pos channel
+	const array<double> &channel_weights,	//channel weights for normal channels
+	double pos_channel_weight,	//channel weights for positive channels
+	unsigned long threshold_rad_support,	//radius for seeing if point passes threshold
+	double pos_channel_threshold,			//threshold for deciding if an image point is worth analyzing. if less than 0, will ignore this step
+	unsigned long n_slices,					//number of slices
+	unsigned long n_oris_pos,				//number of slices in the orientation info for positive channel
+	unsigned long rad_support,				//radius of the window (support)
+	unsigned long min_n_angles,				//minimum number of angles to make the junction. 1 means to discard values if single zone explains it well
+	unsigned long max_n_angles,				//maximum number of angles to make junction
+	unsigned long hist_length,				//TODO stopgap measure
+	matrix<> &pjs,							//output probability of junction
+	matrix< array<double> > &out_angles,	//output optimal angles
+	matrix<> &out_init_est,						//output initial estimate that we threshold for to see if we should run computation on a point. just for debugging
+	const matrix<> &smoothing_kernel,		//for histogram
+	const distanceable_functor<matrix<>, double> &f_dist)	//function for hist diffs
+{
+	const bool debug = false;
+	
+	unsigned long ignored_points = 0;
+
+	//maybe factor this out
+	matrix<> weights = weight_matrix_disc(rad_support, true); //radius of window
+	matrix<> threshold_weights = weight_matrix_disc(threshold_rad_support, true);
+	
+	//assume that norm_channel_weights has same number of values as labels
+	//just have one positive channel for now
+	
+	unsigned long n_channels = labels.size();
+	//entire image size, assume all the channels are the same size
+	unsigned long im_size_x = pos_channel.size(0);
+	unsigned long im_size_y = pos_channel.size(1);
+	//window size
+	unsigned long win_size_x = weights.size(0);
+	unsigned long win_size_y = weights.size(1);
+	//window radius
+	unsigned long win_rx = win_size_x / 2;
+	unsigned long win_ry = win_size_y / 2;
+	//window radius for computing threshold
+	long th_rx = threshold_weights.size(0) / 2;
+	long th_ry = threshold_weights.size(1) / 2;
+	
+	//this function produces a map telling us which pixels correspond to which slice
+	matrix<unsigned long> slice_map = half_orientation_slice_map(
+		win_size_x, win_size_y, n_slices);
+	matrix<unsigned long> threshold_pos_slice_map = half_orientation_slice_map_offset(
+		threshold_weights.size(0), threshold_weights.size(1), n_oris_pos * 2);
+	matrix<unsigned long> pos_slice_map = half_orientation_slice_map_offset(
+		win_size_x, win_size_y, n_oris_pos * 2);
+	
+	//allocate space for histograms
+	//assume all histograms should be the same size
+	//also note that the histograms we create here are mini-histograms
+	// - they will get combined in pick_angles
+	t_auto_2d_matrices slice_hists_p(new array_list<t_auto_1d_matrices>());
+	for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+		auto_ptr<t_auto_1d_matrices> chan_ptr(
+			new t_auto_1d_matrices(new array_list< matrix<> >()));
+		for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
+			auto_ptr<matrix<> > slice_p(new matrix<>(1, hist_length));
+			(**chan_ptr).add(*slice_p);
+			slice_p.release();
+		}
+		slice_hists_p->add(*chan_ptr);
+		chan_ptr.release();
+	}
+	t_2d_matrices &slice_hists = *slice_hists_p;
+	
+	//allocate space for sum of edge outputs
+	//pos_sums(i_chan, i_slice) gives us the count in the i_slice(th) slice in the i_chan(th) channel NOT ANYMORE!!
+	matrix<double> pos_sums(1, n_slices);
+	matrix<double> pos_sums_totals(1, n_slices); //for normalizing
+	
+	//these two for loops iterate over pixels in the image
+	for (unsigned long im_pos_x = 0; im_pos_x < im_size_x; im_pos_x++) {
+	for (unsigned long im_pos_y = 0; im_pos_y < im_size_y; im_pos_y++) {
+		//don't process if: we're on the edge
+		if (im_pos_x < win_rx
+			|| im_pos_x + win_rx >= im_size_x
+			|| im_pos_y < win_ry
+			|| im_pos_y + win_ry >= im_size_y)
+		{
+			pjs(im_pos_x, im_pos_y) = 0;	//do something with out_angles?
+			continue; //skips main processing step
+		}
+		//don't process if: we don't meet the threshold in the positive channels
+		if (pos_channel_threshold >= 0) {	//if threshold is < 0, 
+			double sum = 0;
+			double total = 0;
+			
+			//sum up surrounding area, normalize by number of points
+			for (long th_rel_pos_x = -th_rx; th_rel_pos_x <= th_rx; th_rel_pos_x++) {
+			for (long th_rel_pos_y = -th_ry; th_rel_pos_y <= th_ry; th_rel_pos_y++) {
+				double th_weight =
+					threshold_weights(th_rel_pos_x + th_rx, th_rel_pos_y + th_ry);
+				//take the dot product so that we only count edgels that are aligned
+				//in the direction of the slice
+				double ori_weight =
+					math::abs(math::cos(
+					(static_cast<double>(threshold_pos_slice_map(th_rel_pos_x + th_rx,
+						th_rel_pos_y + th_ry))
+						/ static_cast<double>(n_oris_pos * 2) * (2 * M_PIl))
+					- static_cast<double>(pos_channel_ori(im_pos_x + th_rel_pos_x,
+						im_pos_y + th_rel_pos_y))
+						/ static_cast<double>(n_oris_pos) * (M_PIl) ));
+				sum += th_weight * ori_weight *
+					pos_channel(im_pos_x + th_rel_pos_x, im_pos_y + th_rel_pos_y);
+				total += th_weight;
+			}
+			}
+			
+			//save this computation
+			out_init_est(im_pos_x, im_pos_y) = sum / total;
+			
+			if (sum / total < pos_channel_threshold) {
+				pjs(im_pos_x, im_pos_y) = 0; //do something with out_angles?
+				ignored_points++;
+				continue;	//skips main processing step
+			}
+		}
+		
+		//now, main processing
+		
+		//clear histograms
+		for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+			for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
+				get2dEl(slice_hists, i_chan, i_slice).fill(0);
+			}
+		}
+		
+		//clear pos_sums
+		pos_sums.fill(0);
+		pos_sums_totals.fill(0);
+		
+		//fill in histograms for neighborhood around this point
+		long win_rx_s = static_cast<long>(win_rx);
+		long win_ry_s = static_cast<long>(win_ry);
+		for (long rel_pos_x = -win_rx_s; rel_pos_x <= win_rx_s; rel_pos_x++) {
+		for (long rel_pos_y = -win_ry_s; rel_pos_y <= win_ry_s; rel_pos_y++) {
+			long win_pos_x = rel_pos_x + win_rx_s;
+			long win_pos_y = rel_pos_y + win_ry_s;
+			long im_win_pos_x = im_pos_x + rel_pos_x;
+			long im_win_pos_y = im_pos_y + rel_pos_y;
+			
+			//fill in mini-histograms
+			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+	//			if (labels[i_chan](im_win_pos_x, im_win_pos_y) >=
+		//			get2dEl(slice_hists, i_chan, slice_map(win_pos_x, win_pos_y)).size())
+			//		cout << "trouble!! " << i_chan << ", " << labels[i_chan](im_win_pos_x, im_win_pos_y) << ", " << get2dEl(slice_hists, i_chan, slice_map(win_pos_x, win_pos_y)) << endl;
+			
+				get2dEl(slice_hists, i_chan, slice_map(win_pos_x, win_pos_y))
+					[labels[i_chan](im_win_pos_x, im_win_pos_y)]
+					+= weights(win_pos_x, win_pos_y);
+			}
+			
+			//fill in pos_sums
+			double ori_weight =
+				math::abs(math::cos(
+				(static_cast<double>(pos_slice_map(win_pos_x, win_pos_y))
+					/ static_cast<double>(n_oris_pos * 2) * (2 * M_PIl))
+				- static_cast<double>(pos_channel_ori(im_win_pos_x, im_win_pos_y))
+					/ static_cast<double>(n_oris_pos) * (M_PIl) ));
+			pos_sums(0, pos_slice_map(win_pos_x, win_pos_y))
+				+= weights(win_pos_x, win_pos_y)
+				   * ori_weight
+				   * pos_channel(im_win_pos_x, im_win_pos_y);
+			pos_sums_totals(0, pos_slice_map(win_pos_x, win_pos_y))
+				+= weights(win_pos_x, win_pos_y);
+				   
+		} // for rel_pos_x
+		} // for rel_pos_x
+		
+		//normalize pos sums
+		for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
+			pos_sums(0, i_slice) /= pos_sums_totals(0, i_slice);
+		}
+		
+		if (debug) {
+			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+				for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
+					cout << i_chan << ", " << i_slice << ":\n" << get2dEl(slice_hists, i_chan, i_slice) << endl;
+				}
+			}
+		}
+		
+		//passes channel_weights, min_n_angles, max_n_angles straight on from parameters
+		pick_angles_exp(slice_hists, pos_sums, channel_weights, pos_channel_weight,
+			min_n_angles, max_n_angles, out_angles(im_pos_x, im_pos_y),
+			pjs(im_pos_x, im_pos_y), smoothing_kernel);	//if we're on the edge, don't bother
+	} // for im_pos_x loop
+	} // for im_pos_y loop
+	
+	std::cout << "Ignored points: " << static_cast<double>(ignored_points) / (im_size_x * im_size_y) << std::endl;
+}
+
+/*
+ * Computes best selection of angles at a single point in a single image
+ * by minimizing a dispersion statistic for each section split by the angles
+ *
+ * Given a function f_disp, which maps from a set of histograms to a value and
+ * is some kind of dispersion statistic for the histograms.
+ * Let the n histograms be called A[0], A[1], ... A[n-1]
+ * We want to select 'a' angles t[0], t[1], ... t[a-1] such that
+ * SUM_{i = 0 to a - 2} (disp(A[t[i] to t[i+1]]))
+ * 		+ disp(A[0 to t[0] AND t[a-1] to t[n-1]])
+ * is minimized
+ */
+ 
+void lib_image::pick_angles_homog(
+	array_list<matrix<> > &slice_hists,
+	unsigned long max_n_angles, //TODO right now treats this as n_angles, not max
+	matrix<double> &best_costs,
+	matrix<long> &best_indices,
+	array<double> &angles,
+	double &pj,
+	const matrix<> &smoothing_kernel,
+	const dispersion_functor<collection<matrix<double> > > &f_disp) 
+{
+	const bool debug = true;
+
+	unsigned long n_slices = slice_hists.size();
+	array<unsigned long> hist_dim = slice_hists[0].dimensions();
+	
+	//TODO max_n_angles can't be less than 2
+	//TODO we only really need max_n_angles - 1 in 3rd dimension
+	if (best_costs.size(0) != n_slices || best_costs.size(1) != n_slices ||
+		best_indices.size(0) != n_slices || best_indices.size(1) != n_slices ||
+		best_costs.size(2) != max_n_angles || best_indices.size(2) != max_n_angles)
+	{
+		throw ex_invalid_argument("best_costs and best_indices must be n_slices x n_slices x max_n_angles");
+	}
+	
+	//prep for smoothing
+	bool use_smoothing = !(smoothing_kernel.is_empty());
+	matrix<> temp_conv(hist_dim);
+	
+	//L1 normalize bins & smooth
+	for (unsigned long i_angle = 0; i_angle < n_slices; i_angle++) {
+		//normalize
+		matrix<> &sh = slice_hists[i_angle];
+		double sum_hist = sum(sh);
+		if (sum_hist != 0)
+			sh /= sum_hist;
+		//now smooth
+		if (use_smoothing) {
+			temp_conv.fill(0);
+			conv_in_place_1D(sh, smoothing_kernel, temp_conv);
+			for (unsigned long n_bin = 0; n_bin < sh.size(); n_bin++) {
+				sh[n_bin] = temp_conv[n_bin];
+			}
+		}
+	}
+	
+	//these matrices are indexed in at (i, j, a), to indicate best cost/index for
+	//having a breaks for the interval [i, j]
+	best_costs.fill(-1);
+	best_indices.fill(-1);
+	//also, a break index at 3, for example, puts elements 0, 1, 2 in one group
+	//and 3, 4, 5, ... in the other
+	//break indices must therefore be in the range (0, n_slices)
+	//	for now, because we are computing costs for when 
+	
+	//note that each entry best_cost(i, j, 0) is the dispersion of the interval [i, j]
+	//leave invalid entries, i > j as -1
+	//fill in base cases for best_cost
+	//best_indices(i, j, 0) should be -1, as this doesn't really make sense
+	array_list<matrix<> > subarrays1, subarrays2;
+	for (unsigned long i = 0; i < n_slices; i++) {
+		for (unsigned long j = i; j < n_slices; j++) {
+			//subarray function is inclusive, too
+			subarrays1.clear();
+			slice_hists.subarray(i, j, subarrays1);
+			best_costs(i, j, 0) = f_disp(subarrays1);
+		}
+	}
+	
+	//recurse/iterate, starting with a = 1
+	//we only need to look for a-2 breaks, because the last 2 breaks are special
+	//note: the third index into best_costs is a little weird because it is
+	//actually 1-indexed, but it can take on values of 0
+	for (unsigned long a = 1; a <= max_n_angles - 2	; a++) {
+		//to have 'a' breaks, you need at least a + 1 elements, so we have to have that
+		//j - i + 1 >= a + 1; so j >= i + a
+		for (unsigned long i = 0; i < n_slices; i++) {
+			for (unsigned long j = i + a; j < n_slices; j++) {
+				//choose min_{k in [i + a - 1, j - 1]}
+				//	best_cost(i, k, a-1) + dispersion(k+1, j)
+				double curr_cost;
+				//to have a-1 breaks, you need at least a elements, so
+				//k - i + 1 >= a => k >= i + a - 1 
+				//also, the break occurs at k, so k < j, and we shouldn't have k = j
+				for (unsigned long k = i + a; k <= j; k++) {
+					//remember that best_costs(k + 1, j, 0) gives dispersion score
+					curr_cost = best_costs(i, k - 1, a - 1) + best_costs(k, j, 0);
+					//index == -1 indicates we haven't touched it yet
+					if (curr_cost < best_costs(i, j, a) ||
+						best_indices(i, j, a) == -1)
+					{
+						best_costs(i, j, a) = curr_cost;
+						best_indices(i, j, a) = k;
+					}
+				}
+			}
+		}
+	}
+	
+	//now account for the final 2 breaks, which wrap around
+	long best_first = -1;
+	long best_last = -1;
+	double best_cost(0), curr_cost(0);
+	
+	//normally, first is in [0, n_slices - max_n_angles]
+	//and last is in [first  + max_n_angles, n_slices]
+	//with the exception that if first is 0, then last cannot be n_slices
+	for (unsigned long first = 0; first <= n_slices - max_n_angles; first++) {
+		for (unsigned long last = first + max_n_angles;
+			last <= n_slices - 1;
+			last++)
+		{
+			subarrays1.clear();
+			subarrays2.clear();
+			if (first > 0)
+				slice_hists.subarray(0, first - 1, subarrays1);
+			if (last < n_slices)
+				slice_hists.subarray(last, n_slices - 1, subarrays2);
+			subarrays1.add(subarrays2);
+			curr_cost = best_costs(first, last - 1, max_n_angles - 2) +
+				f_disp(subarrays1);
+			
+			//cout << "[" << first << ", " << last << "]: " << best_costs(first, last - 1, max_n_angles - 1) << ", " << f_disp(subarrays1) << " = " << curr_cost << endl;
+				
+			if (curr_cost < best_cost || best_first == -1) {
+				best_first = first;
+				best_last = last;
+				best_cost = curr_cost;
+			}
+		}
+	}
+	
+	//now go back through best_indices to get the indices
+	//TODO this shouldn't always come back to the same size: related to earlier TODO
+	angles.resize(max_n_angles);
+	{ //just block off these local variables
+		double convertFactor = 2 * M_PIl / n_slices;
+		angles[0] = convertFactor * best_first;
+		angles[max_n_angles - 1] = convertFactor * best_last;
+		unsigned long curr_break = best_last;
+		
+		for (long i_angle = max_n_angles - 2; i_angle > 0; i_angle--) {
+			curr_break = best_indices(best_first, curr_break - 1, i_angle);
+			angles[i_angle] = convertFactor * curr_break;
+		}
+	}
+	
+	pj = best_cost;
+	
+	if (debug) {
+		for (unsigned long i = 0; i < slice_hists.size(); i++) {
+			cout << slice_hists[i] << endl;
+		}
+		cout << pj << ": " << angles << endl;
+	}
+}
+
+/*
+ * Computes best selection of angles at every point in an image
+ * The angles are chosen by minimizing a dispersion statistic for each section
+ * split by the angles
+ */
+
+void lib_image::compute_pj_homog(
+	const matrix<unsigned long> &labels,
+	unsigned long n_slices,
+	unsigned long rad_support,
+	unsigned long max_n_angles,
+	matrix<> &pjs,
+	matrix<array<double> > &out_angles,
+	const matrix<> &smoothing_kernel,
+	const dispersion_functor<collection<matrix<double> > > &f_disp)
+{
+	const bool debug = false;
+
+	//copied from compute_pj_diffs_exp
+	//maybe factor this out
+	matrix<> weights = weight_matrix_disc(rad_support); //radius of window
+	
+	//entire image size, assume all the channels are the same size
+	unsigned long im_size_x = labels.size(0);
+	unsigned long im_size_y = labels.size(1);
+	//window size
+	unsigned long win_size_x = weights.size(0);
+	unsigned long win_size_y = weights.size(1);
+	//window radius
+	unsigned long win_rx = win_size_x / 2;
+	unsigned long win_ry = win_size_y / 2;
+	
+	//this function produces a map telling us which pixels correspond to which slice
+	matrix<unsigned long> slice_map = half_orientation_slice_map(
+		win_size_x, win_size_y, n_slices);
+	//end copied from compute_pj_diffs_exp
+	
+	//allocate space for histograms
+	//assume all histograms should be the same size
+	//also note that the histograms we create here are mini-histograms
+	// - they will get combined in pick_angles
+	unsigned long hist_length = max(labels) + 1;
+	t_auto_1d_matrices slice_hists_p(new array_list< matrix<> >());
+	for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
+		auto_ptr<matrix<> > slice_p(new matrix<>(1, hist_length));
+		slice_hists_p->add(*slice_p);
+		slice_p.release();
+	}
+	array_list<matrix<> > &slice_hists = *slice_hists_p;
+	
+	//allocate space for calculated answers
+	//our recursion is best-breaks-and-cost(first n slices, a breaks)
+	// = min_[i = a, n] cost(i, a - 1) + cost(data[i, n])
+	matrix<double> best_costs(n_slices, n_slices, max_n_angles, true);
+	matrix<long> best_indices(n_slices, n_slices, max_n_angles, true);
+	
+	//these two for loops iterate over pixels in the image
+	for (unsigned long im_pos_x = 0; im_pos_x < im_size_x; im_pos_x++) {
+	for (unsigned long im_pos_y = 0; im_pos_y < im_size_y; im_pos_y++) {
+	if (im_pos_x < win_rx	//if we're on the edge, don't bother
+		|| im_pos_x + win_rx >= im_size_x
+		|| im_pos_y < win_ry
+		|| im_pos_y + win_ry >= im_size_y)
+	{
+		pjs(im_pos_x, im_pos_y) = 0;
+		//do something with out_angles?
+	} else {				//if we have enough padding, do the meat of the computation
+		//clear histograms
+		for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
+			slice_hists[i_slice].fill(0);
+		}
+		
+		//fill in histograms for neighborhood around this point
+		long win_rx_s = static_cast<long>(win_rx);
+		long win_ry_s = static_cast<long>(win_ry);
+		for (long rel_pos_x = -win_rx_s; rel_pos_x <= win_rx_s; rel_pos_x++) {
+		for (long rel_pos_y = -win_ry_s; rel_pos_y <= win_ry_s; rel_pos_y++) {
+			long win_pos_x = rel_pos_x + win_rx_s;
+			long win_pos_y = rel_pos_y + win_rx_s;
+			long im_win_pos_x = im_pos_x + rel_pos_x;
+			long im_win_pos_y = im_pos_y + rel_pos_y;
+	
+			//fill in mini-histograms
+			slice_hists[slice_map(win_pos_x, win_pos_y)]
+				[labels(im_win_pos_x, im_win_pos_y)]
+				+= weights(win_pos_x, win_pos_y);
+		} // for rel_pos_x
+		} // for rel_pos_x
+		
+		if (debug) {
+			for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
+				cout << i_slice << ":\n" << slice_hists[i_slice] << endl;
+			}
+		}
+		
+		pick_angles_homog(slice_hists, max_n_angles, best_costs, best_indices, out_angles(im_pos_x, im_pos_y), pjs(im_pos_x, im_pos_y), smoothing_kernel, f_disp);
+	} // if/else too close to image border
+	} // for im_pos_x loop
+	} // for im_pos_y loop
+	
+	
+}
+
 
 /*
  * Combine oriented gradients of histograms into a single gradient map.

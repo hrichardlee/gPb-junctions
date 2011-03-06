@@ -60,6 +60,7 @@ namespace functors {
    template <typename T> class matrix_Ln_distance;
    template <typename T> class matrix_X2_distance;
    template <typename T> class matrix_equal;
+   template <typename T> class collection_matrix_var;
 } /* namespace functors */
 } /* namespace matrices */
 } /* namespace math */
@@ -478,6 +479,13 @@ protected:
       unsigned long
    );
    
+   static unsigned long linear_index(
+      const array<unsigned long> &, //dimensions
+      unsigned long,
+      unsigned long,
+      unsigned long
+   );
+   
    /*
     * Compute linear index from multiple indices.
     */
@@ -574,6 +582,7 @@ public:
    friend class math::matrices::functors::matrix_Ln_distance<T>;
    friend class math::matrices::functors::matrix_X2_distance<T>;
    friend class math::matrices::functors::matrix_equal<T>;
+   template <typename U> friend class math::matrices::functors::collection_matrix_var;
 
    /*
     * Constructor.
@@ -603,6 +612,13 @@ public:
    /*
     * Constructors for multi-dimensional matrices.
     */
+   explicit matrix(
+      unsigned long,                /* M */
+      unsigned long,                 /* N */
+      unsigned long,
+      bool		//TODO horrible horrible horrible ugly hack
+   );
+   
    explicit matrix(
       const array<unsigned long>&   /* dimensions */
    );
@@ -748,6 +764,9 @@ public:
     */
    T& operator()(unsigned long, unsigned long);
    const T& operator()(unsigned long, unsigned long) const;
+   
+   T& operator()(unsigned long, unsigned long, unsigned long);
+   const T& operator()(unsigned long, unsigned long, unsigned long) const;
     
    /*
     * Element reference (using multiple indices).
@@ -1657,6 +1676,16 @@ matrix<T,Syn>::matrix(unsigned long M, unsigned long N, const T& t)
  * Constructors for multi-dimensional matrices.
  */
 template <typename T, typename Syn>
+matrix<T,Syn>::matrix(unsigned long M, unsigned long N, unsigned long P, bool flag) 
+ : array<T,Syn>(M*N*P),
+   _dims(3)
+{
+   _dims[0] = M;
+   _dims[1] = N;
+   _dims[2] = P;
+}
+
+template <typename T, typename Syn>
 matrix<T,Syn>::matrix(const array<unsigned long>& dims)
  : array<T,Syn>(matrix<T,Syn>::dims_matrix_size(dims)),
    _dims(dims)
@@ -2033,6 +2062,44 @@ const T& matrix<T,Syn>::operator()(unsigned long x, unsigned long y) const {
    auto_read_lock<const Syn> rlock(*this);
    /* compute linear index */
    unsigned long n = matrix<T,Syn>::linear_index(_dims, x, y);
+   #if MATH__MATRICES__MATRIX__CHECK_BOUNDS
+      /* perform bounds check */
+      if (n >= this->_size)
+         throw ex_index_out_of_bounds(
+            "matrix index out of bounds", 
+            n
+         );
+   #endif
+   /* retrieve element */
+   return this->_data[n];
+}
+
+
+/*
+ * Element reference (using three indices).
+ */
+template <typename T, typename Syn>
+T& matrix<T,Syn>::operator()(unsigned long x, unsigned long y, unsigned long z) {
+   auto_read_lock<const Syn> rlock(*this);
+   /* compute linear index */
+   unsigned long n = matrix<T,Syn>::linear_index(_dims, x, y, z);
+   #if MATH__MATRICES__MATRIX__CHECK_BOUNDS
+      /* perform bounds check */
+      if (n >= this->_size)
+         throw ex_index_out_of_bounds(
+            "matrix index out of bounds", 
+            n
+         );
+   #endif
+   /* retrieve element */
+   return this->_data[n];
+}
+
+template <typename T, typename Syn>
+const T& matrix<T,Syn>::operator()(unsigned long x, unsigned long y, unsigned long z) const {
+   auto_read_lock<const Syn> rlock(*this);
+   /* compute linear index */
+   unsigned long n = matrix<T,Syn>::linear_index(_dims, x, y, z);
    #if MATH__MATRICES__MATRIX__CHECK_BOUNDS
       /* perform bounds check */
       if (n >= this->_size)

@@ -274,6 +274,25 @@ unsigned long matrix_base::linear_index(
 }
 
 /*
+ * Compute linear index from three indices.
+ */
+unsigned long matrix_base::linear_index(
+   const array<unsigned long>& dims, 
+   unsigned long x, 
+   unsigned long y,
+   unsigned long z)
+{
+   unsigned long n_dims = dims.size();
+   unsigned long y_size = (n_dims > 1) ? dims[1] : 1;
+   unsigned long z_size = (n_dims > 2) ? dims[2] : 1;
+   unsigned long index = (x*y_size + y) * z_size + z;
+   for (unsigned long n = 3; n < n_dims; n++)
+      index *= dims[n];
+      
+   return index;
+}
+
+/*
  * Compute linear index from multiple indices.
  */
 unsigned long matrix_base::linear_index(

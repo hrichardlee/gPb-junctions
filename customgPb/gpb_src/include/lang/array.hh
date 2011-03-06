@@ -4,6 +4,8 @@
 #ifndef LANG__ARRAY_HH
 #define LANG__ARRAY_HH
 
+#include <iostream>
+
 #include "concurrent/threads/synchronization/locks/auto_read_lock.hh"
 #include "concurrent/threads/synchronization/locks/auto_read_read_lock.hh"
 #include "concurrent/threads/synchronization/locks/auto_write_lock.hh"
@@ -66,6 +68,8 @@ using lang::iterators::iterator;
 using lang::pointers::auto_ptr;
 using math::random::generators::rand_gen;
 using math::random::generators::rand_gen_uniform;
+
+using std::ostream;
 
 /*
  * Declare class for iterators over arrays.
@@ -1778,6 +1782,8 @@ void array<T,Syn>::sorter_idx::run() {
       child_thread::run(s0, s1);
    }
 }
+
+ostream &operator << (ostream &out, const array<double> &a);
 
 } /* namespace lang */
 

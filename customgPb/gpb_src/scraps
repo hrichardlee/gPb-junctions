@@ -1,0 +1,35 @@
+make sure matrix<array<double>> passed in is right in terms of allocation
+
+
+
+
+
+
+
+
+
+fix borders
+
+
+
+
+
+
+
+	
+		// smooth the histogram bins
+		if (use_smoothing) {
+			for (unsigned long o = 0; o < n_slices; o++) {
+				matrix<> &sh = slice_hist[o];
+				temp_conv.fill(0);
+				conv_in_place_1D(sh, smoothing_kernel, temp_conv);
+				for (unsigned long nh = 0; nh < size_hist; nh++)
+					sh[nh] = temp_conv[nh];
+			}
+		}
+		//L1 normalize the histogram bins
+		for (unsigned long o = 0; o < n_slices; o++) {
+			double sum_slice_hist = sum(slice_hist[o]);
+			if (sum_slice_hist != 0)
+				slice_hist[o] /= sum_slice_hist;
+		}

@@ -1,0 +1,304 @@
+/*
+ * Pj.
+ */
+#include "collections/pointers/auto_collection.hh"
+#include "collections/array_list.hh"
+#include "io/streams/cout.hh"
+#include "io/streams/iomanip.hh"
+#include "io/streams/ios.hh"
+#include "lang/array.hh"
+#include "lang/exceptions/exception.hh"
+#include "lang/exceptions/ex_index_out_of_bounds.hh"
+#include "lang/exceptions/ex_invalid_argument.hh"
+#include "lang/pointers/auto_ptr.hh"
+#include "math/libraries/lib_image.hh"
+#include "math/math.hh"
+#include "math/matrices/matrix.hh"
+
+#include "concurrent/threads/thread.hh"
+
+#include <time.h>
+#include <mex.h>
+
+
+using collections::pointers::auto_collection;
+using collections::array_list;
+using std::endl;
+using io::streams::cout;
+using io::streams::ios;
+using io::streams::iomanip::setiosflags;
+using io::streams::iomanip::setw;
+using lang::array;
+using lang::exceptions::exception;
+using lang::exceptions::ex_index_out_of_bounds;
+using lang::exceptions::ex_invalid_argument;
+using lang::pointers::auto_ptr;
+using math::libraries::lib_image;
+using math::matrices::matrix;
+using math::matrices::vector;
+
+using concurrent::threads::thread;
+
+/********************************** 
+ * Matlab matrix conversion routines.
+ **********************************/
+
+
+/*
+ * Convert an mxArray to an array.
+ */
+ 
+array<double> to_array(const mxArray *a) {
+	unsigned long mrows = static_cast<unsigned long>(mxGetM(a));
+	unsigned long ncols = static_cast<unsigned long>(mxGetN(a));
+	
+	if (mrows != 1 && ncols != 1) {
+		throw ex_invalid_argument("Array required");
+	}
+	
+	array<double> arr(mrows > ncols ? mrows : ncols);
+	double *data = mxGetPr(a);
+	for (unsigned long n = 0; n < arr.size(); n++) {
+		arr[n] = data[n];
+	}
+	
+	return arr;
+}
+
+	typedef array_list<auto_collection< matrix<>, array_list<matrix<> > > > 
+		t_2d_matrices;
+		
+	typedef auto_collection< matrix<>, array_list< matrix<> > >
+		t_auto_1d_matrices;
+	typedef auto_collection<
+		auto_collection< matrix<>, array_list<matrix<> > >,
+		array_list<auto_collection< matrix<>, array_list<matrix<> > > > >
+		t_auto_2d_matrices;
+
+
+/* 
+ * Convert an mxArray to a matrix.
+ */
+matrix<> to_matrix(const mxArray *a) {
+   unsigned long mrows = static_cast<unsigned long>(mxGetM(a));
+   unsigned long ncols = static_cast<unsigned long>(mxGetN(a));
+   double *data = mxGetPr(a);
+   matrix<> m(mrows, ncols);
+   for (unsigned long r = 0; r < mrows; r++) {
+      for (unsigned long c = 0; c < ncols; c++) {
+         m(r,c) = data[(c*mrows) + r];
+      }
+   }
+   return m;
+}
+
+
+/*
+ * Convert a 2D matrix to an mxArray.
+ */
+mxArray* to_mxArray(const matrix<>& m) {
+   unsigned long mrows = m.size(0);
+   unsigned long ncols = m.size(1);
+   mxArray *a = mxCreateDoubleMatrix(
+      static_cast<int>(mrows),
+      static_cast<int>(ncols),
+      mxREAL
+   );
+   double *data = mxGetPr(a);
+   for (unsigned long r = 0; r < mrows; r++) {
+      for (unsigned long c = 0; c < ncols; c++) {
+         data[(c*mrows) + r] = m(r,c);
+      }
+   }
+   return a;
+}
+
+/*
+ * Convert a 2D matrix of arrays to a matlab matrix, just taking one index
+ */
+mxArray* to_mxArray(const matrix<array<double> >& m, unsigned long ind) {
+   unsigned long mrows = m.size(0);
+   unsigned long ncols = m.size(1);
+   mxArray *a = mxCreateDoubleMatrix(
+      static_cast<int>(mrows),
+      static_cast<int>(ncols),
+      mxREAL
+   );
+   double *data = mxGetPr(a);
+   for (unsigned long r = 0; r < mrows; r++) {
+      for (unsigned long c = 0; c < ncols; c++) {
+         data[(c*mrows) + r] = m(r,c)[ind];
+      }
+   }
+   return a;
+}
+
+// Shouldn't really be used, convert unsigned long to double
+void convertToDouble(const matrix<unsigned long> &in, matrix<double> &out) {
+	for (unsigned long r = 0; r < in.size(0); r++) {
+		for (unsigned long c = 0; c < in.size(1); c++) {
+			out(r, c) = in(r, c);
+		}
+	}
+}
+
+matrix<> &get2dEl(array_list<auto_collection< matrix<>, array_list<matrix<> > > > &coll,
+	unsigned long ind1, unsigned long ind2)
+{
+	return (*(coll[ind1]))[ind2];
+}
+
+typedef array_list<auto_collection< matrix<>, array_list<matrix<> > > > 
+	t_2d_matrices;
+	
+typedef auto_collection< matrix<>, array_list< matrix<> > >
+	t_auto_1d_matrices;
+typedef auto_collection<
+	auto_collection< matrix<>, array_list<matrix<> > >,
+	array_list<auto_collection< matrix<>, array_list<matrix<> > > > >
+	t_auto_2d_matrices;
+	
+
+void testPickAnglesHomog() {
+	unsigned long max_n_angles = 3;
+	unsigned long n_slices = 10;
+	
+	
+	t_auto_1d_matrices slice_hists_p(new array_list<matrix<> >());
+	array_list<matrix<> > slice_hists;
+	for (unsigned long i_angle = 0; i_angle < n_slices; i_angle++) {
+		auto_ptr<matrix<> > angle_ptr(new matrix<>(1, 3));
+		slice_hists.add(*angle_ptr);
+		angle_ptr.release();
+	}
+	slice_hists[0](0, 0) = 0; 
+	slice_hists[1](0, 0) = 1;
+	slice_hists[2](0, 0) = 1;
+	slice_hists[3](0, 0) = 1;
+	slice_hists[4](0, 0) = 0;
+	slice_hists[5](0, 0) = 0;
+	slice_hists[6](0, 0) = 0;
+	slice_hists[7](0, 0) = 0;
+	slice_hists[8](0, 0) = 0;
+	slice_hists[9](0, 0) = 0;
+	
+	slice_hists[0](0, 1) = 0; 
+	slice_hists[1](0, 1) = 0;
+	slice_hists[2](0, 1) = 0;
+	slice_hists[3](0, 1) = 0;
+	slice_hists[4](0, 1) = 1;
+	slice_hists[5](0, 1) = 1;
+	slice_hists[6](0, 1) = 1;
+	slice_hists[7](0, 1) = 0;
+	slice_hists[8](0, 1) = 0;
+	slice_hists[9](0, 1) = 0; 
+	
+	slice_hists[0](0, 2) = 1; 
+	slice_hists[1](0, 2) = 0;
+	slice_hists[2](0, 2) = 0;
+	slice_hists[3](0, 2) = 0;
+	slice_hists[4](0, 2) = 1;
+	slice_hists[5](0, 2) = 1;
+	slice_hists[6](0, 2) = 1;
+	slice_hists[7](0, 2) = 1;
+	slice_hists[8](0, 2) = 1;
+	slice_hists[9](0, 2) = 1; 
+	
+	matrix<double> best_costs(n_slices, n_slices, max_n_angles, true);
+	matrix<long> best_indices(n_slices, n_slices, max_n_angles, true);
+	array<double> angles(max_n_angles);
+	double pj;
+	
+	try {
+		lib_image::pick_angles_homog(slice_hists, max_n_angles, best_costs, best_indices, angles, pj);
+	} catch (exception e) {
+		cout << e;
+		e.raise();
+	}
+	
+	cout << angles << ":: " << pj << endl;
+}
+
+//testing pick angles
+void testPickAngles() {
+		
+	t_auto_2d_matrices test_p(new array_list<t_auto_1d_matrices>());
+	auto_ptr<t_auto_1d_matrices> chan_ptr(
+		new t_auto_1d_matrices(new array_list< matrix<> >()));
+	for (unsigned long i_angle = 0; i_angle < 10; i_angle++) {
+		auto_ptr<matrix<> > angle_ptr(new matrix<>(1, 3));
+		(**chan_ptr).add(*angle_ptr);
+		angle_ptr.release();
+	}
+	test_p->add(*chan_ptr);
+	chan_ptr.release();
+
+	get2dEl(*test_p, 0, 0)(0, 0) = 1; 
+	get2dEl(*test_p, 0, 1)(0, 0) = 1;
+	get2dEl(*test_p, 0, 2)(0, 0) = 1;
+	get2dEl(*test_p, 0, 3)(0, 0) = 1;
+	get2dEl(*test_p, 0, 4)(0, 0) = 0;
+	get2dEl(*test_p, 0, 5)(0, 0) = 0;
+	get2dEl(*test_p, 0, 6)(0, 0) = 0;
+	get2dEl(*test_p, 0, 7)(0, 0) = 0;
+	get2dEl(*test_p, 0, 8)(0, 0) = 0;
+	get2dEl(*test_p, 0, 9)(0, 0) = 0;
+	
+	get2dEl(*test_p, 0, 0)(0, 1) = 0; 
+	get2dEl(*test_p, 0, 1)(0, 1) = 0;
+	get2dEl(*test_p, 0, 2)(0, 1) = 0;
+	get2dEl(*test_p, 0, 3)(0, 1) = 0;
+	get2dEl(*test_p, 0, 4)(0, 1) = 1;
+	get2dEl(*test_p, 0, 5)(0, 1) = 1;
+	get2dEl(*test_p, 0, 6)(0, 1) = 1;
+	get2dEl(*test_p, 0, 7)(0, 1) = 1;
+	get2dEl(*test_p, 0, 8)(0, 1) = 1;
+	get2dEl(*test_p, 0, 9)(0, 1) = 1; 
+	
+	get2dEl(*test_p, 0, 0)(0, 2) = 0; 
+	get2dEl(*test_p, 0, 1)(0, 2) = 0;
+	get2dEl(*test_p, 0, 2)(0, 2) = 0;
+	get2dEl(*test_p, 0, 3)(0, 2) = 0;
+	get2dEl(*test_p, 0, 4)(0, 2) = 1;
+	get2dEl(*test_p, 0, 5)(0, 2) = 1;
+	get2dEl(*test_p, 0, 6)(0, 2) = 1;
+	get2dEl(*test_p, 0, 7)(0, 2) = 1;
+	get2dEl(*test_p, 0, 8)(0, 2) = 1;
+	get2dEl(*test_p, 0, 9)(0, 2) = 1; 
+	
+	array<double> cweights(1);
+	array<double> angles(3);
+	double pj;
+	
+	try {
+		lib_image::pick_angles(*test_p, cweights, 3, angles, pj);
+	} catch (std::exception e) {
+		cout << e.what();
+		throw e;
+	}
+	
+	for (int i = 0; i < angles.size(); i++) {
+		angles[i] /= M_PIl * 2 / 10;
+	}
+	cout << angles << endl;
+	cout << pj << endl;
+	
+}
+
+
+/*
+ * Matlab interface.
+ */
+void mexFunction(int nlhs, mxArray *plhs[],
+                 int nrhs, const mxArray *prhs[])
+{
+	if (nlhs != 6 || nrhs != 4) {
+		cout << "Args!\n";
+		return;
+	}
+	
+	
+	
+	//testPickAnglesHomog();
+	
+}

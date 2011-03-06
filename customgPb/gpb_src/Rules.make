@@ -25,7 +25,7 @@ CXX := g++
 CXX_LINK := -ljpeg -lpng
 
 # compilation settings - warning flags
-CXX_WARN_BASIC := -ansi -pedantic-errors -Werror -Wall -Wno-long-long
+CXX_WARN_BASIC := -ansi -pedantic-errors -Wall -Wno-long-long
 CXX_WARN_EXTRA := -Wundef -Wpointer-arith -Wold-style-cast \
                   -Woverloaded-virtual -Wsign-promo
 CXX_WARN  := $(CXX_WARN_BASIC) $(CXX_WARN_EXTRA)
@@ -44,7 +44,7 @@ CXX_LDFLAGS := $(CXX_FLAGS) $(CXX_LINK)
 #############################################################################
 
 # matlab mex file compilation settings - matlab path
-MATLAB_PATH := /usr/sww/pkg/matlab-r2007a
+MATLAB_PATH := /usr/local/MATLAB/R2010b
 
 # matlab mex file compilation settings - matlab architecture (32-bit machines)
 #MATLAB_ARCH := glnx86
