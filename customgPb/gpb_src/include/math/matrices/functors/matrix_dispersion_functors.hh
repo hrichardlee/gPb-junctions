@@ -39,6 +39,17 @@ class dispersion_functor<const T> : public dispersion_functor<T> { };
 
 
 template <typename T>
+class matrix_var : public dispersion_functor<const matrix<T> > {
+protected:
+	const distanceable_functor<matrix<double> &_f_norm;
+public:
+	matrix_var() {}
+	
+	double operator()
+}
+
+
+template <typename T>
 class collection_matrix_var : public dispersion_functor<const collection<matrix<T> > > {
 protected:
 	const distanceable_functor<matrix<double>, double> &_f_norm;

@@ -1,16 +1,18 @@
 %params: im, pjs, angs
+%relies on subplot1 (currently in Documents/MATLAB)
 
 function visualize(im, pjs, angs, radius)
 
-close all;
-
-imfig = figure;
-imshow(im, 'InitialMagnification', 250);
-jfig = figure;
+thefig = figure;
+subplot1(1, 2);
+subplot1(1);
+imshow(im);
+subplot1(2);
 imshow(pjs, 'InitialMagnification', 250);
 
 xdim = size(im, 1);
 ydim = size(im, 2);
+
 
 key = 0;
 while (key ~= 27)
@@ -18,7 +20,7 @@ while (key ~= 27)
 	x = round(x);
 	y = round(y);
 	if (x > 0 && x <= xdim && y > 0 && y <= ydim)
-		figure(imfig);
+    subplot1(1);
 		imshow(im);
 		hold on;
 		
@@ -29,7 +31,7 @@ while (key ~= 27)
 		end
 		
 		hold off;
-		figure(jfig);
+        subplot1(2);
 	end
 end
 
