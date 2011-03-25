@@ -3833,10 +3833,9 @@ void lib_image::pick_angles_exp(
 	array<double> &angles,
 	double &pj,
 	const matrix<> &smoothing_kernel,
-	const distanceable_functor<matrix<>, double> &f_dist)
+	const distanceable_functor<matrix<>, double> &f_dist,
+	bool debug)
 {
-	bool debug = false;
-	
 	//TODO assume that min_n_out_angles >= 1, and min_n_out_angles <= max_n_out_angles
 
 	//assume that n_out_angles < n_angles; or else it doesn't really make sense
@@ -3961,9 +3960,8 @@ void lib_image::pick_angles_exp(
 							get2dEl(curr_hists, i_chan, i_angle + 1));
 				}
 			}
-			for (unsigned long i_angle = 0; i_angle < n_out_angles - 1; i_angle++) {
+			for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
 				//values in pos_sums
-				//unsigned long prevang = curr_angles[i_angle] == 0 ? n_slices - 1 : curr_angles[i_angle] - 1;
 				curr_score +=
 					pos_channel_weight * pos_sums(0, curr_angles[i_angle]);
 			}
@@ -4037,7 +4035,7 @@ void lib_image::compute_pj_exp(
 	const matrix<> &smoothing_kernel,		//for histogram
 	const distanceable_functor<matrix<>, double> &f_dist)	//function for hist diffs
 {
-	const bool debug = false;
+	const bool debug = true;
 	
 	unsigned long ignored_points = 0;
 
@@ -4066,9 +4064,14 @@ void lib_image::compute_pj_exp(
 	matrix<unsigned long> slice_map = half_orientation_slice_map(
 		win_size_x, win_size_y, n_slices);
 	matrix<unsigned long> threshold_pos_slice_map = half_orientation_slice_map_offset(
-		threshold_weights.size(0), threshold_weights.size(1), n_oris_pos * 2);
+		threshold_weights.size(0), threshold_weights.size(1), n_slices);
 	matrix<unsigned long> pos_slice_map = half_orientation_slice_map_offset(
-		win_size_x, win_size_y, n_oris_pos * 2);
+		win_size_x, win_size_y, n_slices);
+		
+	if (debug) {
+		cout << slice_map << endl;
+		cout << pos_slice_map << endl;
+	}
 	
 	//allocate space for histograms
 	//assume all histograms should be the same size
@@ -4175,12 +4178,16 @@ void lib_image::compute_pj_exp(
 					+= weights(win_pos_x, win_pos_y);
 			}
 			
+			//gpb orientation output is maxo = 1-8,
+			//1 is 0 (vertical), 8 is 7/8 * pi CCW from vertical
+			//so to get an angle it is: (maxo - 1) / 8 * pi
+			
 			//fill in pos_sums
 			double ori_weight =
 				math::abs(math::cos(
 				(static_cast<double>(pos_slice_map(win_pos_x, win_pos_y))
-					/ static_cast<double>(n_oris_pos * 2) * (2 * M_PIl))
-				- static_cast<double>(pos_channel_ori(im_win_pos_x, im_win_pos_y))
+					/ static_cast<double>(n_slices) * (2 * M_PIl))
+				- static_cast<double>(pos_channel_ori(im_win_pos_x, im_win_pos_y) - 1)
 					/ static_cast<double>(n_oris_pos) * (M_PIl) ));
 			pos_sums(0, pos_slice_map(win_pos_x, win_pos_y))
 				+= weights(win_pos_x, win_pos_y)
@@ -4188,7 +4195,15 @@ void lib_image::compute_pj_exp(
 				   * pos_channel(im_win_pos_x, im_win_pos_y);
 			pos_sums_totals(0, pos_slice_map(win_pos_x, win_pos_y))
 				+= weights(win_pos_x, win_pos_y);
-				   
+				
+			if (debug && im_pos_x == 9 && im_pos_y == 9 && true) {
+				if (pos_channel(im_win_pos_x, im_win_pos_y) > 0) {
+				cout << pos_slice_map(win_pos_x, win_pos_y) << ", "
+					<< pos_channel_ori(im_win_pos_x, im_win_pos_y) << ":: ";
+				cout << ori_weight << endl;
+				}
+			}
+			
 		} // for rel_pos_x
 		} // for rel_pos_x
 		
@@ -4197,7 +4212,7 @@ void lib_image::compute_pj_exp(
 			pos_sums(0, i_slice) /= pos_sums_totals(0, i_slice);
 		}
 		
-		if (debug) {
+		if (debug && false) {
 			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
 				for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
 					cout << i_chan << ", " << i_slice << ":\n" << get2dEl(slice_hists, i_chan, i_slice) << endl;
@@ -4205,10 +4220,22 @@ void lib_image::compute_pj_exp(
 			}
 		}
 		
+		if (debug && im_pos_x == 9 && im_pos_y == 9 && true) {
+			cout << "(" << im_pos_x << ", " << im_pos_y << ")" << endl;
+			cout << pos_sums << endl;
+		}
+		
+		bool innerDebug = false;
+		if (debug && im_pos_x == 9 && im_pos_y == 9)
+			innerDebug = true;
+		
 		//passes channel_weights, min_n_angles, max_n_angles straight on from parameters
 		pick_angles_exp(slice_hists, pos_sums, channel_weights, pos_channel_weight,
 			min_n_angles, max_n_angles, out_angles(im_pos_x, im_pos_y),
-			pjs(im_pos_x, im_pos_y), smoothing_kernel);	//if we're on the edge, don't bother
+			pjs(im_pos_x, im_pos_y), smoothing_kernel,
+			matrix_distance_functors<>::X2_distance(),
+			innerDebug
+			);	//if we're on the edge, don't bother
 	} // for im_pos_x loop
 	} // for im_pos_y loop
 	

@@ -277,9 +277,9 @@ void mexFunction(int nlhs, mxArray *plhs[],
     filters.add(*filters_small);
     filters.add(*filters_large);
     //compute textons
-    auto_collection< matrix<>, array_list< matrix<> > > textons;
-    matrix<unsigned long> t_assign = lib_image::textons(
-         gray, filters, textons, 64);
+    //auto_collection< matrix<>, array_list< matrix<> > > textons;
+    //matrix<unsigned long> t_assign = lib_image::textons(
+    //     gray, filters, textons, 64);
 	
 	// BUILD PARAMETERS FOR PJ
 	//accumulate normal channels

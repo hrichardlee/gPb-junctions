@@ -1065,7 +1065,8 @@ public:
 	double &,						//output histogram difference score
 	const matrix<>& = matrix<>(),	//smoothing kernel for histogram
 	const distanceable_functor<matrix<>, double> & = //function for hist diffs
-		matrix_distance_functors<>::X2_distance());
+		matrix_distance_functors<>::X2_distance(),
+	bool = false);	//debug
     
    static void compute_pj_exp(
 		const array_list<matrix<unsigned long> > &,			//normal channels quantized

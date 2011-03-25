@@ -3,12 +3,14 @@
 
 function visualize(im, pjs, angs, radius)
 
+mag = 500;
+
 thefig = figure;
 subplot1(1, 2);
 subplot1(1);
-imshow(im);
+imshow(im, 'InitialMagnification', mag);
 subplot1(2);
-imshow(pjs, 'InitialMagnification', 250);
+imshow(pjs, [], 'InitialMagnification', mag);
 
 xdim = size(im, 1);
 ydim = size(im, 2);
@@ -21,7 +23,7 @@ while (key ~= 27)
 	y = round(y);
 	if (x > 0 && x <= xdim && y > 0 && y <= ydim)
     subplot1(1);
-		imshow(im);
+		imshow(im, 'InitialMagnification', mag);
 		hold on;
 		
 		disp([num2str(x) ', ' num2str(y)]);
