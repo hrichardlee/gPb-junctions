@@ -41,30 +41,36 @@ using std::endl;
 
 
 
-matrix<> weight_matrix_disc(unsigned long r, bool middle_hole = false) {
+matrix<> weight_matrix_disc(unsigned long r, long r_inner = -1) {
    /* initialize matrix */
    unsigned long size = 2*r + 1;
    matrix<> weights(size, size);
    /* set values in disc to 1 */
    long radius = static_cast<long>(r);
    long r_sq = radius * radius;
+   long r_inner_sq = r_inner < 0 ? r_inner : r_inner * r_inner;
    unsigned long ind = 0;
    for (long x = -radius; x <= radius; x++) {
       long x_sq = x * x;
       for (long y = -radius; y <= radius; y++) {
          /* check if index is within disc */
          long y_sq = y * y;
-         if ((x_sq + y_sq) <= r_sq)
+         if ((x_sq + y_sq) <= r_sq && (x_sq + y_sq) > r_inner_sq)
             weights[ind] = 1;
          /* increment linear index */
          ind++;
       }
    }
    
-   if (middle_hole)
-      weights(radius, radius) = 0;
-   
    return weights;
+}
+
+void testWeights() {
+	cout << weight_matrix_disc(5) << endl;
+	cout << weight_matrix_disc(5, 0) << endl;
+	cout << weight_matrix_disc(5, 0.5) << endl;
+	cout << weight_matrix_disc(5, 1) << endl;
+	cout << weight_matrix_disc(5, 2) << endl;
 }
 
 
@@ -301,5 +307,5 @@ t_auto_1d_matrices to_matrices(const mxArray *a) {
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
-	testSlices();
+	testWeights();
 }

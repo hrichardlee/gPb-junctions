@@ -26,6 +26,9 @@ using math::matrices::functors::matrix_distance_functors;
 using math::matrices::matrix;
 using collections::abstract::collection;
 
+
+
+////dispersion functors on collections of histograms
 template <typename T>
 class dispersion_functor {
 public:
@@ -100,11 +103,63 @@ public:
 	}
 };
 
+
+
+/////dispersion functors on a single histogram
+template <typename T>
+class hist_disp_functor {
+public:
+	virtual ~hist_disp_functor() { }
+	virtual double operator()(const T &) const = 0;
+};
+
+template <typename T>
+class hist_disp_functor<const T> : public hist_disp_functor<T> { };
+
+
+//interprets the matrix as a one-dimensional histogram going from 0 to 1
+template <typename T>
+class hist_matrix_var : public hist_disp_functor<const matrix<T> > {
+public:
+	hist_matrix_var() {}
+	
+	double operator()(const matrix<T> &m) const {
+		/* matlab code, does identical computation (well, stdev)
+		m = sum(ushist .* (0:(nbins - 1)));
+		sd = sqrt(sum(ushist' .* ((0:(nbins - 1))' - m) .^ 2));
+		m = m / (nbins - 1);
+		sd = sd / (nbins - 1);
+		*/
+		
+		//compute mean first
+		double mean = 0;
+		double variance = 0;
+		unsigned long dim = m._size;
+		
+		for (unsigned long i = 0; i < dim; i++) {
+			mean += static_cast<double>(m._data[i]) * static_cast<double>(i);
+		}
+		
+		//now variance
+		for (unsigned long i = 0; i < dim; i++) {
+			double diff = static_cast<double>(i) - mean;
+			variance += static_cast<double>(m._data[i]) * diff * diff;
+		}
+		variance /= (dim - 1) * (dim - 1);
+		
+		return variance;
+	}
+};
+
+
+
+
 //globally accessible dispersion functors
 template <typename T>
 class dispersion_functors {
 public:
 	static const collection_matrix_var<T> &coll_matrix_var_L2();
+	static const hist_matrix_var<T> &hist_var();
 };
 
 template <typename T>
@@ -114,8 +169,16 @@ const collection_matrix_var<T> &dispersion_functors<T>::coll_matrix_var_L2() {
 	return *f;
 }
 
+template <typename T>
+const hist_matrix_var<T> &dispersion_functors<T>::hist_var() {
+	static const hist_matrix_var<T> *f = new hist_matrix_var<T>();
+	return *f;
 }
-}
-}
+
+
+
+} //functors
+} //matrices
+} //math
 
 #endif

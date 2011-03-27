@@ -1056,11 +1056,13 @@ public:
 	t_2d_matrices &,
 		//histograms of slices that are quantized and we want to take differences for
 	const matrix<> &,				//positive channel sums
-	const array<double> &,			//channel weights
+	const array<double> &,			//channel weights - differences
+	const array<double> &,			//homogeneity weights
 	double,			//channel weights for positive channels
 	unsigned long,
 		//min (inclusive) number of angles to try. 1 means discard if whole thing is homogeneous. should not be lower than 1
 	unsigned long,					//max (inclusive) number of angles to try. should not be smaller than min
+	double,							//norm power when adding scores from wedges
 	array<double> &,				//output best angles
 	double &,						//output histogram difference score
 	const matrix<>& = matrix<>(),	//smoothing kernel for histogram
@@ -1073,15 +1075,18 @@ public:
 		const matrix<double> &,		//positive channel: output of an edge detector that should just be added up instead of maximizing distance and homogeneity
 		const matrix<double> &,		//orientation information for positive channel (like for edgels)
 		const array<double> &,			//channel weights for normal channels
+		const array<double> &,			//channel weights for homogeneity scores
 		double,			//channel weights for positive channels
 		unsigned long,					//radius of window for deciding if point is worth analyzing
 		double,							//threshold for if point is worth analyzing
    		unsigned long,					//number of slices
    		unsigned long,					//number of slices in the orientation info for positive channel
    		unsigned long,					//radius of window (support)
+   		double,					//inner radius of window (to ignore)
    		unsigned long,					//min number of angles
    		unsigned long,					//max number of angles
    		unsigned long,			//TODO hist_length, stopgap measure
+   		double,					//norm power when adding scores from different wedges
    		matrix<> &,						//output probability of junction
    		matrix< array<double> > &,		//output optimal angles, array does not need to be allocated. if min_n_angles != max_n_angles, the arrays may be of different sizes
    		matrix<> &,						//output probability that we want to look there, just for debugging

@@ -61,6 +61,7 @@ namespace functors {
    template <typename T> class matrix_X2_distance;
    template <typename T> class matrix_equal;
    template <typename T> class collection_matrix_var;
+   template <typename T> class hist_matrix_var;
 } /* namespace functors */
 } /* namespace matrices */
 } /* namespace math */
@@ -583,6 +584,7 @@ public:
    friend class math::matrices::functors::matrix_X2_distance<T>;
    friend class math::matrices::functors::matrix_equal<T>;
    template <typename U> friend class math::matrices::functors::collection_matrix_var;
+   template <typename U> friend class math::matrices::functors::hist_matrix_var;
 
    /*
     * Constructor.

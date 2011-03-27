@@ -191,8 +191,8 @@ void mexFunction(int nlhs, mxArray *plhs[],
 	
 	//parameters for compute_pj
 	double *in_params = mxGetPr(prhs[4]);
-	if (mxGetNumberOfElements(prhs[4]) != 10) {
-		cout << "There should be 10 params" << endl;
+	if (mxGetNumberOfElements(prhs[4]) != 14) {
+		cout << "There should be 14 params" << endl;
 		return;
 	}
 	double labweight = in_params[0];
@@ -207,11 +207,16 @@ void mexFunction(int nlhs, mxArray *plhs[],
 	//threshold parameters
 	unsigned long threshold_rad_support = static_cast<unsigned long>(in_params[8]);
 	double pos_channel_threshold = in_params[9];
+	double labhomogweight = in_params[10];
+	double eigvecthomogweight = in_params[11];
+	double rad_inner_support = in_params[12];
+	double norm_power = in_params[13];
 	
 	//eigvects (do this after params because we need threshold weight)
 	t_auto_1d_matrices eigvects;
 	unsigned long num_eigvects = 0;
-	if (mxGetNumberOfDimensions(prhs[3]) != 3 || eigvectweight <= 1e-9) {
+	if (mxGetNumberOfDimensions(prhs[3]) != 3 || 
+		(eigvectweight <= 1e-9 && eigvecthomogweight <= 1e-9)) {
 		cout << "ignoring eigvects" << endl;
 	} else {
 		eigvects = to_matrices(prhs[3]);
@@ -220,7 +225,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
 	
 	//see if we are going to use lab channel
 	unsigned long num_labchan = 3;
-	if (labweight <= 1e-9) {
+	if (labweight <= 1e-9 && labhomogweight <= 1e-9) {
 		cout << "ignoring lab" << endl;
 		num_labchan = 0;
 	}
@@ -228,14 +233,17 @@ void mexFunction(int nlhs, mxArray *plhs[],
 	//compute channel weights from given parameters
 	unsigned long total_channels = num_labchan + num_eigvects;
 	array<double> channel_weights(total_channels);
+	array<double> homog_weights(total_channels);
 	{
 		unsigned long curr_channel = 0;
 		for (unsigned long i = 0; i < num_labchan; i++) {
 			channel_weights[curr_channel] = 1.0 / num_labchan * labweight;
+			homog_weights[curr_channel] = 1.0 / num_labchan * labhomogweight;
 			curr_channel++;
 		}
 		for (unsigned long i = 0; i < num_eigvects; i++) {
 			channel_weights[curr_channel] = 1.0 / num_eigvects * eigvectweight;
+			homog_weights[curr_channel] = 1.0 / num_eigvects * eigvecthomogweight;
 			curr_channel++;
 		}
 	}
@@ -312,9 +320,10 @@ void mexFunction(int nlhs, mxArray *plhs[],
 	try {
 		lib_image::compute_pj_exp(
 			channels, poschan, poschan_ori,
-			channel_weights, pos_channel_weight,
+			channel_weights, homog_weights, pos_channel_weight,
 			threshold_rad_support, pos_channel_threshold,
-			n_slices, n_oris_gpb, rad_support, min_n_angles, max_n_angles, num_bins,
+			n_slices, n_oris_gpb, rad_support, rad_inner_support,
+			min_n_angles, max_n_angles, num_bins, norm_power,
 			pjs, jangles, init_ests,
 			vector(bg_smooth_kernel));
 	} catch (exception e) {

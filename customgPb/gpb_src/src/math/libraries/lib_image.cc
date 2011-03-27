@@ -58,6 +58,8 @@ using math::geometry::seg_intersect;
 using math::geometry::triangulation;
 using math::matrices::matrix;
 using math::matrices::cmatrix;
+using math::matrices::functors::dispersion_functors;
+using math::matrices::functors::hist_disp_functor;
 using mlearning::clustering::clusterers::abstract::centroid_clusterer;
 using mlearning::clustering::clusterers::general::sample_clusterer;
 using mlearning::clustering::metrics::matrix_metrics;
@@ -3026,28 +3028,26 @@ matrix<bool> region_mask_annulus(unsigned long r_inner, unsigned long r_outer)
  * Optionally leave the central point out (I think default should be true, but
  * don't want to break legacy code)
  */
-matrix<> weight_matrix_disc(unsigned long r, bool middle_hole = false) {
+matrix<> weight_matrix_disc(unsigned long r, long r_inner = -1) {
    /* initialize matrix */
    unsigned long size = 2*r + 1;
    matrix<> weights(size, size);
    /* set values in disc to 1 */
    long radius = static_cast<long>(r);
    long r_sq = radius * radius;
+   long r_inner_sq = r_inner <= 0  ? -1 : r_inner * r_inner;
    unsigned long ind = 0;
    for (long x = -radius; x <= radius; x++) {
       long x_sq = x * x;
       for (long y = -radius; y <= radius; y++) {
          /* check if index is within disc */
          long y_sq = y * y;
-         if ((x_sq + y_sq) <= r_sq)
+         if ((x_sq + y_sq) <= r_sq && (x_sq + y_sq) > r_inner_sq)
             weights[ind] = 1;
          /* increment linear index */
          ind++;
       }
    }
-   
-   if (middle_hole)
-      weights(radius, radius) = 0;
    
    return weights;
 }
@@ -3826,10 +3826,12 @@ using std::endl;
 void lib_image::pick_angles_exp(
 	t_2d_matrices &slice_hists,		//not const because gets used to calculate running sums
 	const matrix<> &pos_sums,		//positive channels like output of edge detector
-	const array<double> &channel_weights,
+	const array<double> &channel_weights,		//for differences
+	const array<double> &homog_weights, 		//for homogeneity
 	double pos_channel_weight,
 	unsigned long min_n_out_angles,		//1 means discard if homogeneous
 	unsigned long max_n_out_angles,
+	double norm_power,
 	array<double> &angles,
 	double &pj,
 	const matrix<> &smoothing_kernel,
@@ -3837,6 +3839,9 @@ void lib_image::pick_angles_exp(
 	bool debug)
 {
 	//TODO assume that min_n_out_angles >= 1, and min_n_out_angles <= max_n_out_angles
+	
+	//TODO should be a parameter, but whatever...
+	const hist_disp_functor<matrix<double> > &f_var = dispersion_functors<double>::hist_var();
 
 	//assume that n_out_angles < n_angles; or else it doesn't really make sense
 	//also assume slice_hists.size == channel_weights.size()
@@ -3872,7 +3877,7 @@ void lib_image::pick_angles_exp(
 		chan_ptr.release();
 	}
 	t_2d_matrices &curr_hists = *curr_hists_p;
-	
+
 	//prep for smoothing
 	bool use_smoothing = (!(smoothing_kernel.is_empty())) && (n_channels > 0);
 	matrix<> temp_conv(hist_dim);
@@ -3946,24 +3951,44 @@ void lib_image::pick_angles_exp(
 		
 			//now compute score
 			double curr_score = 0;
+			//differences between wedges
 			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
 				//difference between first and last histograms
-				curr_score +=
-					channel_weights[i_chan] *
-					f_dist(get2dEl(curr_hists, i_chan, n_out_angles - 1),
+				double diff_score = f_dist(get2dEl(curr_hists, i_chan, n_out_angles - 1),
 						get2dEl(curr_hists, i_chan, 0));
+				curr_score +=
+					channel_weights[i_chan] * pow(diff_score, norm_power);
+					
 				for (unsigned long i_angle = 0; i_angle < n_out_angles - 1; i_angle++) {
 					//differences between histograms
-					curr_score +=
-						channel_weights[i_chan] *
-						f_dist(get2dEl(curr_hists, i_chan, i_angle),
+					diff_score = f_dist(get2dEl(curr_hists, i_chan, i_angle),
 							get2dEl(curr_hists, i_chan, i_angle + 1));
+					curr_score +=
+						channel_weights[i_chan] * pow(diff_score, norm_power);
 				}
 			}
+			
+			if (debug && false)
+				cout << curr_angles << ": ";
+			
+			//homogeneity of wedges
+			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+				for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
+					double variance = f_var(get2dEl(curr_hists, i_chan, i_angle));
+					
+					if (debug && i_chan == 0 && false)
+						cout << variance << ", " <<
+							get2dEl(curr_hists, i_chan, i_angle) << endl;
+					curr_score += homog_weights[i_chan] * pow(1 - variance, norm_power);
+				}
+			}
+			if (debug && false)
+				cout << endl;
+			//coincidence with wedges
 			for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
 				//values in pos_sums
 				curr_score +=
-					pos_channel_weight * pos_sums(0, curr_angles[i_angle]);
+					pos_channel_weight * pow(pos_sums(0, curr_angles[i_angle]), norm_power);
 			}
 			//normalize by number of angles
 			//TODO better normalization possible?
@@ -3976,7 +4001,7 @@ void lib_image::pick_angles_exp(
 				best_n_angles = n_out_angles;
 			}
 		
-			if (debug)
+			if (debug && false)
 				std::cout << "angles: " << curr_angles
 					<< " score: " << curr_score << std::endl;
 		
@@ -4019,29 +4044,32 @@ void lib_image::compute_pj_exp(
 	const matrix<double> &pos_channel,
 		//positive channel: edge output that should just be summed and added to the score
 	const matrix<double> &pos_channel_ori,	//orientation information for pos channel
-	const array<double> &channel_weights,	//channel weights for normal channels
+	const array<double> &channel_weights,	//channel weights for normal channels (differences)
+	const array<double> &homog_weights,		//homogeneity weights
 	double pos_channel_weight,	//channel weights for positive channels
 	unsigned long threshold_rad_support,	//radius for seeing if point passes threshold
 	double pos_channel_threshold,			//threshold for deciding if an image point is worth analyzing. if less than 0, will ignore this step
 	unsigned long n_slices,					//number of slices
 	unsigned long n_oris_pos,				//number of slices in the orientation info for positive channel
 	unsigned long rad_support,				//radius of the window (support)
+	double rad_inner_support,		//inner radius (points to ignore)
 	unsigned long min_n_angles,				//minimum number of angles to make the junction. 1 means to discard values if single zone explains it well
 	unsigned long max_n_angles,				//maximum number of angles to make junction
 	unsigned long hist_length,				//TODO stopgap measure
+	double norm_power,						//power when adding scores from different wedges, i.e., (x1 ^ p + x2 ^ p) ^ (1/p)
 	matrix<> &pjs,							//output probability of junction
 	matrix< array<double> > &out_angles,	//output optimal angles
 	matrix<> &out_init_est,						//output initial estimate that we threshold for to see if we should run computation on a point. just for debugging
 	const matrix<> &smoothing_kernel,		//for histogram
 	const distanceable_functor<matrix<>, double> &f_dist)	//function for hist diffs
 {
-	const bool debug = true;
+	const bool debug = false;
 	
 	unsigned long ignored_points = 0;
 
 	//maybe factor this out
-	matrix<> weights = weight_matrix_disc(rad_support, true); //radius of window
-	matrix<> threshold_weights = weight_matrix_disc(threshold_rad_support, true);
+	matrix<> weights = weight_matrix_disc(rad_support, rad_inner_support); //radius of window
+	matrix<> threshold_weights = weight_matrix_disc(threshold_rad_support, rad_inner_support);
 	
 	//assume that norm_channel_weights has same number of values as labels
 	//just have one positive channel for now
@@ -4220,7 +4248,7 @@ void lib_image::compute_pj_exp(
 			}
 		}
 		
-		if (debug && im_pos_x == 9 && im_pos_y == 9 && true) {
+		if (debug && im_pos_x == 9 && im_pos_y == 9 && false) {
 			cout << "(" << im_pos_x << ", " << im_pos_y << ")" << endl;
 			cout << pos_sums << endl;
 		}
@@ -4230,8 +4258,10 @@ void lib_image::compute_pj_exp(
 			innerDebug = true;
 		
 		//passes channel_weights, min_n_angles, max_n_angles straight on from parameters
-		pick_angles_exp(slice_hists, pos_sums, channel_weights, pos_channel_weight,
-			min_n_angles, max_n_angles, out_angles(im_pos_x, im_pos_y),
+		pick_angles_exp(slice_hists, pos_sums,
+			channel_weights, homog_weights, pos_channel_weight,
+			min_n_angles, max_n_angles, norm_power,
+			out_angles(im_pos_x, im_pos_y),
 			pjs(im_pos_x, im_pos_y), smoothing_kernel,
 			matrix_distance_functors<>::X2_distance(),
 			innerDebug
