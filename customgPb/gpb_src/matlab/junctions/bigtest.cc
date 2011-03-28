@@ -254,9 +254,154 @@ void testVar() {
 	
 }
 
+void conv_in_place_1D_orig(
+   const matrix<>& m0,
+   const matrix<>& m1,
+   matrix<>& m)
+{
+   /* get size of each matrix */
+   unsigned long size0 = m0.size();
+   unsigned long size1 = m1.size();
+   /* set dimensions for result matrix no larger than left input */
+   unsigned long size = ((size0 > 0) && (size1 > 0)) ? (size0) : 0;
+   /* set start position for result matrix no larger than left input */
+   unsigned long pos_start = size1/2;
+   /* initialize position in result */
+   unsigned long pos = pos_start;
+   for (unsigned long n = 0; n < size; n++) {
+      /* compute range of offset */
+      unsigned long offset_min = ((pos + 1) > size0) ? (pos + 1 - size0) : 0;
+      unsigned long offset_max = (pos < size1) ? pos : (size1 - 1);
+      /* multiply and add corresponing elements */
+      unsigned long ind0 = pos - offset_min;
+      unsigned long ind1 = offset_min;
+      while (ind1 <= offset_max) {
+         /* update result value */
+         m[n] += m0[ind0] * m1[ind1];
+         /* update linear positions */
+         ind0--;
+         ind1++;
+      }
+      /* update position */
+      pos++;
+   }
+}
+
+
+void conv_in_place_1D(
+   const matrix<>& m0,
+   const matrix<>& m1,
+   matrix<>& m)
+{
+   /* get size of each matrix */
+   unsigned long vertsize = m0.size(0);
+   
+   
+   unsigned long size0 = m0.size(1);
+   unsigned long size1 = m1.size(1);
+   /* set dimensions for result matrix no larger than left input */
+   unsigned long size = ((size0 > 0) && (size1 > 0)) ? (size0) : 0;
+   cout << "vertsize" << vertsize << ", " << size0 << " , " << size1 << endl;
+   
+   for (unsigned long vertpos = 0; vertpos < vertsize; vertpos++) {
+	   /* set start position for result matrix no larger than left input */
+	   unsigned long pos_start = size1/2;
+	   /* initialize position in result */
+	   unsigned long pos = pos_start;
+	   for (unsigned long n = 0; n < size; n++) {
+		  /* compute range of offset */
+		  unsigned long offset_min = ((pos + 1) > size0) ? (pos + 1 - size0) : 0;
+		  unsigned long offset_max = (pos < size1) ? pos : (size1 - 1);
+		  /* multiply and add corresponing elements */
+		  unsigned long ind0 = pos - offset_min;
+		  unsigned long ind1 = offset_min;
+		  while (ind1 <= offset_max) {
+		     /* update result value */
+		     cout << n << ", " << ind0 << ", " << ind1 << endl;
+		     m(vertpos, n) += m0(vertpos, ind0) * m1(0, ind1);
+		     cout << "end?" << endl;
+		     /* update linear positions */
+		     ind0--;
+		     ind1++;
+		  }
+		  /* update position */
+		  pos++;
+	   }
+   }
+}
+
+void testconv() {
+
+	matrix<double> y1(1, 10);
+	y1(0, 0) = 0.5;
+	y1(0, 1) = 0;
+	y1(0, 3) = 0;
+	y1(0, 4) = 0;
+	y1(0, 5) = 0;
+	y1(0, 6) = 0;
+	y1(0, 7) = 0;
+	y1(0, 8) = 0;
+	y1(0, 9) = 0.5;
+	matrix<double> y2(1, 10);
+	y2(0, 0) = 0;
+	y2(0, 1) = 0;
+	y2(0, 2) = 0;
+	y2(0, 3) = 0.3;
+	y2(0, 4) = 0.4;
+	y2(0, 5) = 0.3;
+	y2(0, 6) = 0;
+	y2(0, 7) = 0;
+	y2(0, 8) = 0;
+	y2(0, 9) = 0;
+	
+	
+	matrix<double> y(2, 10);
+	y(0, 0) = 0.5;
+	y(0, 1) = 0;
+	y(0, 3) = 0;
+	y(0, 4) = 0;
+	y(0, 5) = 0;
+	y(0, 6) = 0;
+	y(0, 7) = 0;
+	y(0, 8) = 0;
+	y(0, 9) = 0.5;
+	
+	y(1, 0) = 0;
+	y(1, 1) = 0;
+	y(1, 2) = 0;
+	y(1, 3) = 0.3;
+	y(1, 4) = 0.4;
+	y(1, 5) = 0.3;
+	y(1, 6) = 0;
+	y(1, 7) = 0;
+	y(1, 8) = 0;
+	y(1, 9) = 0;
+	
+	matrix<double> f(1, 3);
+	f(0, 0) = 0.1;
+	f(0, 1) = 0.4;
+	f(0, 2) = 0.1;
+	
+	matrix<double> out(2, 10);
+	matrix<double> out1(1, 10);
+	
+	cout << "hello???" << endl;
+	
+	conv_in_place_1D(y, f, out);
+	cout << out << endl;
+	
+	out1.fill(0);
+	conv_in_place_1D_orig(y2, f, out1);
+	cout << out1 << endl;
+	out1.fill(0);
+	conv_in_place_1D_orig(y1, f, out1);
+	cout << out1 << endl;
+}
+
+
+
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
-	testVar();
-	
+	testconv();
 }

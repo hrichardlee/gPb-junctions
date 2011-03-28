@@ -25,16 +25,17 @@ pnames = {
     '# of slices', ...                      10
     '# of orientations in gpb', ...         11
     ...
-    'Radius', ...                           12
-    'Hole radius', ...                      13
+    'Radius1', ...                          12
+    'Radius2', ...                          13
+    'Hole radius1', ...                     14
     ...
-    'Min # of angles', ...                  14
-    'Max # of angles', ...                  15
+    'Min # of angles', ...                  15
+    'Max # of angles', ...                  16
     ...
-    'Radius for thresholding', ...          16
-    'Threshold', ...                        17
+    'Radius for thresholding', ...          17
+    'Threshold', ...                        18
     ...
-    'Norm power' ...                        18
+    'Norm power' ...                        19
     };
     
 
@@ -53,16 +54,17 @@ defp = [
     16     %10 number of slices
     8      %11 number of orientations in positive channel orientation - don't change unless rerun gpb
     
-    12     %12 radius of support
-    0      %13 hole radius
+    12     %12 radius of support (1)
+    0      %13 radius of support (2)
+    0      %14 hole radius
     
-    3      %14 min number of angles
-    3      %15 max number of angles
+    3      %15 min number of angles
+    3      %16 max number of angles
     
-    4      %16 radius of support for calculating threshold
-    0.01   %17 threshold in positive channel for pursuing further computation
-    
-    1      %18 power for summing diffs/edges/homogeneities
+    4      %17 radius of support for calculating threshold
+    0.01   %18 threshold in positive channel for pursuing further computation
+ 
+    1      %19 power for summing diffs/edges/homogeneities
     ]';
 
 p.pos = @(p)    [0 0 1 0 0 0 0 0 0 p(10:end)];
@@ -79,12 +81,13 @@ p.hvect = @(p)  [0 0 0 0 0 0 0 1 0 p(10:end)];
 
 p.wide = @(p) [p(1:11) 24 p(13:end)];
 p.small = @(p) [p(1:11) 8 p(13:end)];
+p.wide2 = @(p) [p(1:12) 24 p(14:end)];
 
-p.hole = @(x, p) [p(1:12) x p(14:end)];
+p.hole = @(x, p) [p(1:13) x p(15:end)];
 
-p.d2 = @(p) [p(1:13) 2 2 p(16:end)];
+p.d2 = @(p) [p(1:14) 2 2 p(17:end)];
 
-p.pow = @(x, p) [p(1:17) x];
+p.pow = @(x, p) [p(1:18) x];
 
 
 
@@ -121,7 +124,11 @@ p.a1 = [
 
 pex.a1 = repmat(defp, [size(p.a1, 1), 1]);
     
-    
+p.a2 = [p.a1(1:5, :); p.a1(9:end, :)];
+for i=1:size(p.a2, 1)
+    p.a2(i, :) = p.wide2(p.a2(i, :));
+end
+pex.a2 = repmat(defp, [size(p.a2, 1), 1]);
 
     
     

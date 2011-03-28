@@ -54,6 +54,3 @@ end
 fclose(paramsfile);
 
 end
-
-
-

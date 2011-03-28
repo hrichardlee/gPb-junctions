@@ -3025,21 +3025,25 @@ matrix<bool> region_mask_annulus(unsigned long r_inner, unsigned long r_outer)
 
 /*
  * Construct weight matrix for circular disc of the given radius.
- * Optionally leave the central point out (I think default should be true, but
- * don't want to break legacy code)
+ * Optionally leave out a hole
+ * Optionally use a bigger matrix
  */
-matrix<> weight_matrix_disc(unsigned long r, long r_inner = -1) {
+matrix<> weight_matrix_disc(unsigned long r, long r_inner = -1, unsigned long winr = 0) {
    /* initialize matrix */
-   unsigned long size = 2*r + 1;
+   if (winr == 0)
+      winr = r;
+   
+   unsigned long size = 2*winr + 1;
    matrix<> weights(size, size);
    /* set values in disc to 1 */
    long radius = static_cast<long>(r);
+   long winradius = static_cast<long>(winr);
    long r_sq = radius * radius;
    long r_inner_sq = r_inner <= 0  ? -1 : r_inner * r_inner;
    unsigned long ind = 0;
-   for (long x = -radius; x <= radius; x++) {
+   for (long x = -winradius; x <= winradius; x++) {
       long x_sq = x * x;
-      for (long y = -radius; y <= radius; y++) {
+      for (long y = -winradius; y <= winradius; y++) {
          /* check if index is within disc */
          long y_sq = y * y;
          if ((x_sq + y_sq) <= r_sq && (x_sq + y_sq) > r_inner_sq)
@@ -3172,6 +3176,47 @@ void conv_in_place_1D(
       }
       /* update position */
       pos++;
+   }
+}
+
+//so m0 is n x m, m1 is f x 1, convolves each row of m0 with m1
+//treats m1 as 1 dimensional, m0 and m as 2 dimensional
+void conv_in_place_1D_horiz(
+   const matrix<>& m0,
+   const matrix<>& m1,
+   matrix<>& m)
+{
+   /* get size of each matrix */
+   unsigned long vertsize = m0.size(0);
+   
+   
+   unsigned long size0 = m0.size(1);
+   unsigned long size1 = m1.size();
+   /* set dimensions for result matrix no larger than left input */
+   unsigned long size = ((size0 > 0) && (size1 > 0)) ? (size0) : 0;
+   
+   for (unsigned long vertpos = 0; vertpos < vertsize; vertpos++) {
+	   /* set start position for result matrix no larger than left input */
+	   unsigned long pos_start = size1/2;
+	   /* initialize position in result */
+	   unsigned long pos = pos_start;
+	   for (unsigned long n = 0; n < size; n++) {
+		  /* compute range of offset */
+		  unsigned long offset_min = ((pos + 1) > size0) ? (pos + 1 - size0) : 0;
+		  unsigned long offset_max = (pos < size1) ? pos : (size1 - 1);
+		  /* multiply and add corresponing elements */
+		  unsigned long ind0 = pos - offset_min;
+		  unsigned long ind1 = offset_min;
+		  while (ind1 <= offset_max) {
+		     /* update result value */
+		     m(vertpos, n) += m0(vertpos, ind0) * m1[ind1];
+		     /* update linear positions */
+		     ind0--;
+		     ind1++;
+		  }
+		  /* update position */
+		  pos++;
+	   }
    }
 }
 
@@ -3818,6 +3863,13 @@ matrix<T> &get2dEl(array_list<auto_collection< matrix<T>, array_list<matrix<T> >
 	return (*(coll[ind1]))[ind2];
 }
 
+template <class T>
+void getRow(const matrix<T> &bigm, unsigned long row, matrix<T> &out) {
+	for (unsigned long i = 0; i < bigm.size(1); i++) {
+		out(0, i) = bigm(row, i);
+	}
+}
+
 using std::cout;
 using std::endl;
 
@@ -3838,24 +3890,33 @@ void lib_image::pick_angles_exp(
 	const distanceable_functor<matrix<>, double> &f_dist,
 	bool debug)
 {
+	//recall that slice_hists(i_chan, i_slice)[i_scale, i_bin]
+
 	//TODO assume that min_n_out_angles >= 1, and min_n_out_angles <= max_n_out_angles
 	
-	//TODO should be a parameter, but whatever...
+	//TODO should be parameters, but whatever...
+	const double homog_scale = 5;
+	const double homog_power = 1.0/35.0;
 	const hist_disp_functor<matrix<double> > &f_var = dispersion_functors<double>::hist_var();
 
 	//assume that n_out_angles < n_angles; or else it doesn't really make sense
 	//also assume slice_hists.size == channel_weights.size()
 	unsigned long n_channels = slice_hists.size();
 	unsigned long n_slices = pos_sums.size();
+	unsigned long n_scales = 0; //to get immediately revised... this is sloppy TODO
+	unsigned long n_bins = 0;
 	array<unsigned long> hist_dim;
 	if (n_channels > 0) {
 		hist_dim = (*(slice_hists[0]))[0].dimensions();
+		n_scales = hist_dim[0];
+		n_bins = hist_dim[1];
 	}
 	
 	//recall that pos_sums gets indexed into by (i_pos_chan, i_slice)
 	
 	//turn slice_hists and pos_channel into running sums
 	//outer index is channel index, inner index is slice index
+	//note that we account for scales for free!
 	for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
 		for (unsigned long i_slice = 1; i_slice < n_slices; i_slice++) {
 			get2dEl(slice_hists, i_chan, i_slice) +=
@@ -3864,6 +3925,7 @@ void lib_image::pick_angles_exp(
 	}
 	
 	//allocate space for histograms
+	//so curr_hists is same indexing as slice_hists
 	t_auto_2d_matrices curr_hists_p(new array_list<t_auto_1d_matrices>());
 	for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
 		auto_ptr<t_auto_1d_matrices> chan_ptr(
@@ -3880,7 +3942,9 @@ void lib_image::pick_angles_exp(
 
 	//prep for smoothing
 	bool use_smoothing = (!(smoothing_kernel.is_empty())) && (n_channels > 0);
-	matrix<> temp_conv(hist_dim);
+	matrix<> temp_conv(n_scales, n_bins);
+	matrix<> temp_hist1(1, n_bins);
+	matrix<> temp_hist2(1, n_bins);
 	
 	//best angles
 	array<unsigned long> best_angles(max_n_out_angles);
@@ -3906,6 +3970,7 @@ void lib_image::pick_angles_exp(
 			//compute histograms for current angles
 			//last angle is all the ones before the first angle and all the ones
 			//after the last angle
+			//get scales for free
 			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
 				get2dEl(curr_hists, i_chan, n_out_angles - 1) =
 					get2dEl(slice_hists, i_chan, n_slices - 1) -
@@ -3915,6 +3980,7 @@ void lib_image::pick_angles_exp(
 						: matrix<>::zeros(hist_dim));
 			}
 			//compute histograms for current angles, other than last angle
+			//get scales for free
 			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
 				for (unsigned long i_angle = 0; i_angle < n_out_angles - 1; i_angle++) {
 					if (curr_angles[i_angle] == 0) {
@@ -3933,19 +3999,27 @@ void lib_image::pick_angles_exp(
 					for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
 						matrix<> &sh = get2dEl(curr_hists, i_chan, i_angle);
 						temp_conv.fill(0);
-						conv_in_place_1D(sh, smoothing_kernel, temp_conv);
-						for (unsigned long n_bin = 0; n_bin < sh.size(); n_bin++) {
-							sh[n_bin] = temp_conv[n_bin];
-						}
+						//do all the scales
+						conv_in_place_1D_horiz(sh, smoothing_kernel, temp_conv);
+						sh = temp_conv;
 					}
 				}
 			}
 			//L1 normalize bins
 			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
 				for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
-					double sum_hist = sum(get2dEl(curr_hists, i_chan, i_angle));
-					if (sum_hist != 0)
-						get2dEl(curr_hists, i_chan, i_angle) /= sum_hist;
+					for (unsigned long i_scale = 0; i_scale < n_scales; i_scale++) {
+						double sum_hist = 0;
+						matrix<double> &sh = get2dEl(curr_hists, i_chan, i_angle);
+						for (unsigned long i_bin = 0; i_bin < n_bins; i_bin++) {
+							sum_hist += sh(i_scale, i_bin);
+						}
+						if (sum_hist != 0) {
+							for (unsigned long i_bin = 0; i_bin < n_bins; i_bin++) {
+								sh(i_scale, i_bin) /= sum_hist;
+							}
+						}
+					}
 				}
 			}
 		
@@ -3953,51 +4027,59 @@ void lib_image::pick_angles_exp(
 			double curr_score = 0;
 			//differences between wedges
 			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
+			for (unsigned long i_scale = 0; i_scale < n_scales; i_scale++) {
 				//difference between first and last histograms
-				double diff_score = f_dist(get2dEl(curr_hists, i_chan, n_out_angles - 1),
-						get2dEl(curr_hists, i_chan, 0));
+				getRow(get2dEl(curr_hists, i_chan, n_out_angles - 1),
+					i_scale, temp_hist1);
+				getRow(get2dEl(curr_hists, i_chan, 0), i_scale, temp_hist2);
+				double diff_score = f_dist(temp_hist1, temp_hist2);
 				curr_score +=
 					channel_weights[i_chan] * pow(diff_score, norm_power);
 					
 				for (unsigned long i_angle = 0; i_angle < n_out_angles - 1; i_angle++) {
 					//differences between histograms
-					diff_score = f_dist(get2dEl(curr_hists, i_chan, i_angle),
-							get2dEl(curr_hists, i_chan, i_angle + 1));
+					getRow(get2dEl(curr_hists, i_chan, i_angle), i_scale, temp_hist1);
+					getRow(get2dEl(curr_hists, i_chan, i_angle + 1), i_scale, temp_hist2);
+					diff_score = f_dist(temp_hist1, temp_hist2);
 					curr_score +=
 						channel_weights[i_chan] * pow(diff_score, norm_power);
 				}
-			}
+			} //i_scale
+			} //i_chan
 			
 			if (debug && false)
 				cout << curr_angles << ": ";
 			
 			//homogeneity of wedges
 			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
-				for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
-					double variance = f_var(get2dEl(curr_hists, i_chan, i_angle));
-					
-					//normalize variance TODO get exact value
-					//we also have to rescale it to get it to play nice with other values
-					variance = pow(variance * 25, 30);
-					variance = variance > 1 ? 1 : variance;
-					
-					if (debug && i_chan == 0 && false)
-						cout << variance << ", " <<
-							get2dEl(curr_hists, i_chan, i_angle) << endl;
-					curr_score += homog_weights[i_chan] * pow(1 - variance, norm_power);
-				}
-			}
-			if (debug && false)
-				cout << endl;
-			//coincidence with wedges
 			for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
+			for (unsigned long i_scale = 0; i_scale < n_scales; i_scale++) {
+				getRow<double>(get2dEl(curr_hists, i_chan, i_angle), i_scale, temp_hist1);
+				double variance = f_var(temp_hist1);
+				
+				//normalize variance TODO get exact value
+				//we also have to rescale it to get it to play nice with other values
+				variance = variance * homog_scale;
+				variance = variance > 1 ? 1 : variance;
+				variance = pow(variance, homog_power);
+				
+				curr_score += homog_weights[i_chan] * pow(1 - variance, norm_power);
+			}	//i_scale
+			}	//i_angle
+			}	//i_chan
+			
+			
+			//coincidence with edges
+			for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
+			for (unsigned long i_scale = 0; i_scale < n_scales; i_scale++) {
 				//values in pos_sums
 				curr_score +=
-					pos_channel_weight * pow(pos_sums(0, curr_angles[i_angle]), norm_power);
+					pos_channel_weight * pow(pos_sums(i_scale, curr_angles[i_angle]), norm_power);
 			}
-			//normalize by number of angles
-			//TODO better normalization possible?
-			curr_score /= n_out_angles;
+			}
+			//normalize by number of angles and scales
+			//TODO better normalization possible? - also could set diff coords for each scale
+			curr_score /= (n_out_angles * n_scales);
 		
 			//see if our angles are best now
 			if (curr_score > best_score) {
@@ -4056,7 +4138,7 @@ void lib_image::compute_pj_exp(
 	double pos_channel_threshold,			//threshold for deciding if an image point is worth analyzing. if less than 0, will ignore this step
 	unsigned long n_slices,					//number of slices
 	unsigned long n_oris_pos,				//number of slices in the orientation info for positive channel
-	unsigned long rad_support,				//radius of the window (support)
+	array<unsigned long> radii_support,				//radii of the window (support) - last one must be largest TODO
 	double rad_inner_support,		//inner radius (points to ignore)
 	unsigned long min_n_angles,				//minimum number of angles to make the junction. 1 means to discard values if single zone explains it well
 	unsigned long max_n_angles,				//maximum number of angles to make junction
@@ -4072,9 +4154,28 @@ void lib_image::compute_pj_exp(
 	
 	unsigned long ignored_points = 0;
 
-	//maybe factor this out
-	matrix<> weights = weight_matrix_disc(rad_support, rad_inner_support); //radius of window
+	//make weight discs
 	matrix<> threshold_weights = weight_matrix_disc(threshold_rad_support, rad_inner_support);
+	
+	unsigned long n_scales = radii_support.size();
+	unsigned long n_scales_unused = 0;
+	unsigned long max_radius = radii_support[n_scales - 1]; //assume last one is largest
+	
+	t_auto_1d_matrices supp_weights_p(new t_1d_matrices());
+	t_1d_matrices &supp_weights = *supp_weights_p;
+	auto_ptr<matrix<> > curr_weight_disc;
+	for (unsigned long i_scale = 0; i_scale < n_scales; i_scale++) {
+		if (radii_support[i_scale] == 0) {
+			n_scales_unused++;
+		} else {
+			curr_weight_disc.reset(new matrix<>());
+			*curr_weight_disc = weight_matrix_disc(
+				radii_support[i_scale], rad_inner_support, max_radius);
+			supp_weights.add(*curr_weight_disc);
+			curr_weight_disc.release();
+		}
+	}
+	n_scales -= n_scales_unused;
 	
 	//assume that norm_channel_weights has same number of values as labels
 	//just have one positive channel for now
@@ -4084,8 +4185,8 @@ void lib_image::compute_pj_exp(
 	unsigned long im_size_x = pos_channel.size(0);
 	unsigned long im_size_y = pos_channel.size(1);
 	//window size
-	unsigned long win_size_x = weights.size(0);
-	unsigned long win_size_y = weights.size(1);
+	unsigned long win_size_x = supp_weights[0].size(0);
+	unsigned long win_size_y = supp_weights[0].size(1);
 	//window radius
 	unsigned long win_rx = win_size_x / 2;
 	unsigned long win_ry = win_size_y / 2;
@@ -4104,18 +4205,22 @@ void lib_image::compute_pj_exp(
 	if (debug) {
 		cout << slice_map << endl;
 		cout << pos_slice_map << endl;
+		for (unsigned long i = 0; i < n_scales; i++) {
+			cout << supp_weights[i] << endl;
+		}
 	}
 	
 	//allocate space for histograms
 	//assume all histograms should be the same size
 	//also note that the histograms we create here are mini-histograms
 	// - they will get combined in pick_angles
+	//structure is: slice_hist(i_chan, i_slice)[i_scale, i_bin]
 	t_auto_2d_matrices slice_hists_p(new array_list<t_auto_1d_matrices>());
 	for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
 		auto_ptr<t_auto_1d_matrices> chan_ptr(
 			new t_auto_1d_matrices(new array_list< matrix<> >()));
 		for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
-			auto_ptr<matrix<> > slice_p(new matrix<>(1, hist_length));
+			auto_ptr<matrix<> > slice_p(new matrix<>(n_scales, hist_length));
 			(**chan_ptr).add(*slice_p);
 			slice_p.release();
 		}
@@ -4125,9 +4230,9 @@ void lib_image::compute_pj_exp(
 	t_2d_matrices &slice_hists = *slice_hists_p;
 	
 	//allocate space for sum of edge outputs
-	//pos_sums(i_chan, i_slice) gives us the count in the i_slice(th) slice in the i_chan(th) channel NOT ANYMORE!!
-	matrix<double> pos_sums(1, n_slices);
-	matrix<double> pos_sums_totals(1, n_slices); //for normalizing
+	//pos_sums(i_scale, i_slice) gives us the count in the i_slice(th) slice in the i_scale(th) channel
+	matrix<double> pos_sums(n_scales, n_slices);
+	matrix<double> pos_sums_totals(n_scales, n_slices); //for normalizing
 	
 	//these two for loops iterate over pixels in the image
 	for (unsigned long im_pos_x = 0; im_pos_x < im_size_x; im_pos_x++) {
@@ -4202,39 +4307,31 @@ void lib_image::compute_pj_exp(
 			
 			//fill in mini-histograms
 			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
-	//			if (labels[i_chan](im_win_pos_x, im_win_pos_y) >=
-		//			get2dEl(slice_hists, i_chan, slice_map(win_pos_x, win_pos_y)).size())
-			//		cout << "trouble!! " << i_chan << ", " << labels[i_chan](im_win_pos_x, im_win_pos_y) << ", " << get2dEl(slice_hists, i_chan, slice_map(win_pos_x, win_pos_y)) << endl;
-			
-				get2dEl(slice_hists, i_chan, slice_map(win_pos_x, win_pos_y))
-					[labels[i_chan](im_win_pos_x, im_win_pos_y)]
-					+= weights(win_pos_x, win_pos_y);
+				for (unsigned long i_scale = 0; i_scale < n_scales; i_scale++) {
+					get2dEl(slice_hists, i_chan, slice_map(win_pos_x, win_pos_y))
+						(i_scale, labels[i_chan](im_win_pos_x, im_win_pos_y))
+						+= supp_weights[i_scale](win_pos_x, win_pos_y);
+				}
 			}
 			
 			//gpb orientation output is maxo = 1 thru 8,
 			//1 is 0 (vertical), 8 is 7/8 * pi CCW from vertical
 			//so to get an angle it is: (maxo - 1) / 8 * pi
 			
-			//fill in pos_sums
-			double ori_weight =
-				math::abs(math::cos(
-				(static_cast<double>(pos_slice_map(win_pos_x, win_pos_y))
-					/ static_cast<double>(n_slices) * (2 * M_PIl))
-				- static_cast<double>(pos_channel_ori(im_win_pos_x, im_win_pos_y) - 1)
-					/ static_cast<double>(n_oris_pos) * (M_PIl) ));
-			pos_sums(0, pos_slice_map(win_pos_x, win_pos_y))
-				+= weights(win_pos_x, win_pos_y)
-				   * ori_weight
-				   * pos_channel(im_win_pos_x, im_win_pos_y);
-			pos_sums_totals(0, pos_slice_map(win_pos_x, win_pos_y))
-				+= weights(win_pos_x, win_pos_y);
-				
-			if (debug && im_pos_x == 9 && im_pos_y == 9 && true) {
-				if (pos_channel(im_win_pos_x, im_win_pos_y) > 0) {
-				cout << pos_slice_map(win_pos_x, win_pos_y) << ", "
-					<< pos_channel_ori(im_win_pos_x, im_win_pos_y) << ":: ";
-				cout << ori_weight << endl;
-				}
+			for (unsigned long i_scale = 0; i_scale < n_scales; i_scale++) {
+				//fill in pos_sums
+				double ori_weight =
+					math::abs(math::cos(
+					(static_cast<double>(pos_slice_map(win_pos_x, win_pos_y))
+						/ static_cast<double>(n_slices) * (2 * M_PIl))
+					- static_cast<double>(pos_channel_ori(im_win_pos_x, im_win_pos_y) - 1)
+						/ static_cast<double>(n_oris_pos) * (M_PIl) ));
+				pos_sums(i_scale, pos_slice_map(win_pos_x, win_pos_y))
+					+= supp_weights[i_scale](win_pos_x, win_pos_y)
+					   * ori_weight
+					   * pos_channel(im_win_pos_x, im_win_pos_y);
+				pos_sums_totals(i_scale, pos_slice_map(win_pos_x, win_pos_y))
+					+= supp_weights[i_scale](win_pos_x, win_pos_y);
 			}
 			
 		} // for rel_pos_x
@@ -4245,24 +4342,10 @@ void lib_image::compute_pj_exp(
 			pos_sums(0, i_slice) /= pos_sums_totals(0, i_slice);
 		}
 		
-		if (debug && false) {
-			for (unsigned long i_chan = 0; i_chan < n_channels; i_chan++) {
-				for (unsigned long i_slice = 0; i_slice < n_slices; i_slice++) {
-					cout << i_chan << ", " << i_slice << ":\n" << get2dEl(slice_hists, i_chan, i_slice) << endl;
-				}
-			}
-		}
-		
-		if (debug && im_pos_x == 9 && im_pos_y == 9 && false) {
-			cout << "(" << im_pos_x << ", " << im_pos_y << ")" << endl;
-			cout << pos_sums << endl;
-		}
-		
 		bool innerDebug = false;
 		if (debug && im_pos_x == 9 && im_pos_y == 9)
 			innerDebug = true;
 			
-		
 		//passes channel_weights, min_n_angles, max_n_angles straight on from parameters
 		pick_angles_exp(slice_hists, pos_sums,
 			channel_weights, homog_weights, pos_channel_weight,

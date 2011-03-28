@@ -1081,7 +1081,7 @@ public:
 		double,							//threshold for if point is worth analyzing
    		unsigned long,					//number of slices
    		unsigned long,					//number of slices in the orientation info for positive channel
-   		unsigned long,					//radius of window (support)
+   		array<unsigned long>,					//radii of windows (support) - last one must be largest....
    		double,					//inner radius of window (to ignore)
    		unsigned long,					//min number of angles
    		unsigned long,					//max number of angles
