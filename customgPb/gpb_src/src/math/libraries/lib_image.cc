@@ -3976,6 +3976,11 @@ void lib_image::pick_angles_exp(
 				for (unsigned long i_angle = 0; i_angle < n_out_angles; i_angle++) {
 					double variance = f_var(get2dEl(curr_hists, i_chan, i_angle));
 					
+					//normalize variance TODO get exact value
+					//we also have to rescale it to get it to play nice with other values
+					variance = pow(variance * 25, 30);
+					variance = variance > 1 ? 1 : variance;
+					
 					if (debug && i_chan == 0 && false)
 						cout << variance << ", " <<
 							get2dEl(curr_hists, i_chan, i_angle) << endl;
@@ -4206,7 +4211,7 @@ void lib_image::compute_pj_exp(
 					+= weights(win_pos_x, win_pos_y);
 			}
 			
-			//gpb orientation output is maxo = 1-8,
+			//gpb orientation output is maxo = 1 thru 8,
 			//1 is 0 (vertical), 8 is 7/8 * pi CCW from vertical
 			//so to get an angle it is: (maxo - 1) / 8 * pi
 			
@@ -4256,6 +4261,7 @@ void lib_image::compute_pj_exp(
 		bool innerDebug = false;
 		if (debug && im_pos_x == 9 && im_pos_y == 9)
 			innerDebug = true;
+			
 		
 		//passes channel_weights, min_n_angles, max_n_angles straight on from parameters
 		pick_angles_exp(slice_hists, pos_sums,

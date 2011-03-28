@@ -40,153 +40,8 @@ using std::cout;
 using std::endl;
 
 
-
-matrix<> weight_matrix_disc(unsigned long r, long r_inner = -1) {
-   /* initialize matrix */
-   unsigned long size = 2*r + 1;
-   matrix<> weights(size, size);
-   /* set values in disc to 1 */
-   long radius = static_cast<long>(r);
-   long r_sq = radius * radius;
-   long r_inner_sq = r_inner < 0 ? r_inner : r_inner * r_inner;
-   unsigned long ind = 0;
-   for (long x = -radius; x <= radius; x++) {
-      long x_sq = x * x;
-      for (long y = -radius; y <= radius; y++) {
-         /* check if index is within disc */
-         long y_sq = y * y;
-         if ((x_sq + y_sq) <= r_sq && (x_sq + y_sq) > r_inner_sq)
-            weights[ind] = 1;
-         /* increment linear index */
-         ind++;
-      }
-   }
-   
-   return weights;
-}
-
-void testWeights() {
-	cout << weight_matrix_disc(5) << endl;
-	cout << weight_matrix_disc(5, 0) << endl;
-	cout << weight_matrix_disc(5, 0.5) << endl;
-	cout << weight_matrix_disc(5, 1) << endl;
-	cout << weight_matrix_disc(5, 2) << endl;
-}
-
-
 /*
- * Construct orientation slice lookup map, have slices go all the way
- * around instead of mirroring across origin
- */
-matrix<unsigned long> half_orientation_slice_map(
-   unsigned long size_x, unsigned long size_y, unsigned long n_ori)
-{
-   /* initialize map */
-   matrix<unsigned long> slice_map(size_x, size_y);
-   /* compute orientation of each element from center */
-   unsigned long ind = 0;
-   double x = -static_cast<double>(size_x - 1)/2;
-   for (unsigned long n_x = 0; n_x < size_x; n_x++) {
-      double y = -static_cast<double>(size_y - 1)/2;
-      for (unsigned long n_y = 0; n_y < size_y; n_y++) {
-         /* compute orientation index */
-         double ori = std::atan2(y, x) + M_PIl;
-         long idx = static_cast<long>(
-            math::ceil(ori / (2 * M_PIl) * static_cast<double>(n_ori))
-         ) - 1;
-         
-         slice_map[ind] = idx;
-         /* increment position */
-         ind++;
-         y++;
-      }
-      /* increment x-coordinate */
-      x++;
-   }
-   return slice_map;
-}
 
-matrix<unsigned long> half_orientation_slice_map_offset(
-	unsigned long size_x, unsigned long size_y, unsigned long n_ori)
-{
-	matrix<unsigned long> slice_map =
-		half_orientation_slice_map(size_x, size_y, n_ori * 2);
-	for (unsigned long x = 0; x < size_x; x++) {
-	for (unsigned long y = 0; y < size_y; y++) {
-		if (slice_map(x, y) % 2 == 0)
-			slice_map(x, y) /= 2;
-		else if (slice_map(x, y) == 2 * n_ori - 1)
-			slice_map(x, y) = 0;
-		else
-			slice_map(x, y) = (slice_map(x, y) + 1) / 2;
-	}
-	}
-	
-	return slice_map;
-}
-
-void testSlices() {
-	unsigned long n_slices = 8;
-	unsigned long rad = 3;
-	
-	array<unsigned long> counts(n_slices), counts2(n_slices);
-	matrix<> w = weight_matrix_disc(rad, true);
-	matrix<unsigned long> sm = half_orientation_slice_map(w.size(0), w.size(1), n_slices);
-	matrix<unsigned long> sm2 = half_orientation_slice_map_offset(w.size(0), w.size(1), n_slices);
-	for (unsigned long x = 0; x < sm.size(0); x++) {
-	for (unsigned long y = 0; y < sm.size(1); y++) {
-		if (w(x, y) == 0) sm(x, y) = 0;
-		else counts[sm(x, y)]++;
-		
-		if (w(x, y) == 0) sm2(x, y) = 0;
-		else counts2[sm2(x, y)]++;
-	}
-	}
-	cout << sm << endl
-		<< counts << endl
-		<< sm2 << endl
-		<< counts2 << endl;
-}
-
-unsigned long linear_index(
-   const array<unsigned long>& dims, 
-   unsigned long x, 
-   unsigned long y,
-   unsigned long z)
-{
-   unsigned long n_dims = dims.size();
-   unsigned long y_size = (n_dims > 1) ? dims[1] : 1;
-   unsigned long z_size = (n_dims > 2) ? dims[2] : 1;
-   unsigned long index = (x*y_size + y) * z_size + z;
-   for (unsigned long n = 3; n < n_dims; n++)
-      index *= dims[n];
-   return index;
-}
-
-unsigned long linear_index(
-   const array<unsigned long>& dims,
-   const array<unsigned long>& i)
-{
-   unsigned long n_dims     = dims.size();
-   unsigned long n_dims_i   = i.size();
-   unsigned long n_dims_min = (n_dims < n_dims_i) ? n_dims : n_dims_i;
-   unsigned long index = 0;
-   for (unsigned long n = 0; n < n_dims_min; n++)
-      index = index*dims[n] + i[n];
-   for (unsigned long n = n_dims_min; n < n_dims; n++)
-      index *= dims[n];
-   for (unsigned long n = n_dims_min; n < n_dims_i; n++)
-      index += i[n];
-   return index;
-}
-
-typedef auto_collection< matrix<>, array_list< matrix<> > >
-	t_auto_1d_matrices;
-typedef auto_collection<
-	auto_collection< matrix<>, array_list<matrix<> > >,
-	array_list<auto_collection< matrix<>, array_list<matrix<> > > > >
-	t_auto_2d_matrices;
-	
 void testDisp() {
 
 	t_auto_1d_matrices slice_hists_p(new array_list<matrix<> >());
@@ -237,42 +92,17 @@ void testDisp() {
 		cout << sub[i] << endl;
 	}
 	cout << dispersion_functors<double>::coll_matrix_var_L2()(sub) << endl;
-}
+} */
 
-void templateFor2dMatrices() {
 
-/*
-	auto_collection<
-		auto_collection< matrix<>, array_list<matrix<> > >,
-		array_list<auto_collection< matrix<>, array_list<matrix<> > > > > coll(
-		new array_list<auto_collection< matrix<>, array_list<matrix<> > > >());
-		
-	for (int i = 0; i < 5; i++) {
-		auto_ptr<auto_collection< matrix<>, array_list< matrix<> > > > ptr(
-			new auto_collection< matrix<>, array_list< matrix<> > > (
-				new array_list< matrix<> > ()));
-		for (int j = 0; j < 8; j++) {
-			auto_ptr<matrix<> > iptr(new matrix<>());
-			(**ptr).add(*iptr);
-			iptr.release();
-		}
-		coll->add(*ptr);
-		ptr.release();
-	}
+typedef array_list<matrix<> > t_1d_matrices;
+typedef auto_collection<matrix<>, t_1d_matrices> t_auto_1d_matrices;
+typedef array_list<t_auto_1d_matrices> t_2d_matrices;
+typedef auto_collection<t_auto_1d_matrices,	t_2d_matrices> t_auto_2d_matrices;
+
+typedef array_list<matrix<unsigned long> > t_1dul_matrices;
+typedef auto_collection<matrix<unsigned long>, t_1dul_matrices> t_auto_1dul_matrices;
 	
-	matrix<> &m = (*(*coll)[2])[3]; */
-}
-
-typedef array_list<auto_collection< matrix<>, array_list<matrix<> > > > 
-	t_2d_matrices;
-	
-typedef auto_collection< matrix<>, array_list< matrix<> > >
-	t_auto_1d_matrices;
-typedef auto_collection<
-	auto_collection< matrix<>, array_list<matrix<> > >,
-	array_list<auto_collection< matrix<>, array_list<matrix<> > > > >
-	t_auto_2d_matrices;
-
 
 t_auto_1d_matrices to_matrices(const mxArray *a) {
 	//assume that
@@ -304,8 +134,129 @@ t_auto_1d_matrices to_matrices(const mxArray *a) {
 	return out;
 }
 
+
+// Shouldn't really be used, convert unsigned long to double
+void convertToDouble(const matrix<unsigned long> &in, matrix<double> &out) {
+	for (unsigned long r = 0; r < in.size(0); r++) {
+		for (unsigned long c = 0; c < in.size(1); c++) {
+			out(r, c) = in(r, c);
+		}
+	}
+}
+
+
+
+/*
+ * Convert a 2D matrix to an mxArray.
+ */
+mxArray* to_mxArray(const matrix<>& m) {
+   unsigned long mrows = m.size(0);
+   unsigned long ncols = m.size(1);
+   mxArray *a = mxCreateDoubleMatrix(
+      static_cast<int>(mrows),
+      static_cast<int>(ncols),
+      mxREAL
+   );
+   double *data = mxGetPr(a);
+   for (unsigned long r = 0; r < mrows; r++) {
+      for (unsigned long c = 0; c < ncols; c++) {
+         data[(c*mrows) + r] = m(r,c);
+      }
+   }
+   return a;
+}
+
+	double var(const matrix<double> &m) {
+		/* matlab code, does identical computation (well, stdev)
+		m = sum(ushist .* (0:(nbins - 1)));
+		sd = sqrt(sum(ushist' .* ((0:(nbins - 1))' - m) .^ 2));
+		m = m / (nbins - 1);
+		sd = sd / (nbins - 1);
+		*/
+		
+		//compute mean first
+		double mean = 0;
+		double variance = 0;
+		unsigned long dim = m.size(0);
+		
+		for (unsigned long i = 0; i < dim; i++) {
+			mean += static_cast<double>(m(i, 0)) * (static_cast<double>(i) + 0.5);
+		}
+		
+		//now variance
+		for (unsigned long i = 0; i < dim; i++) {
+			double diff = (static_cast<double>(i) + 0.5) - mean;
+			variance += static_cast<double>(m(i, 0)) * diff * diff;
+		}
+		cout << mean << ", " << variance << endl;
+		
+		variance /= (dim - 1) * (dim - 1);
+		
+		return variance;
+	}
+
+void testVar() {
+	matrix<double> x(25, 1);
+	x(0, 0) = 0.1636;
+	x(1, 0) = 0.1394;
+	x(2, 0) = 0.1013;
+	x(3, 0) = 0.0627;
+	x(4, 0) = 0.0330;
+	x(5, 0) = 0;
+	x(6, 0) = 0;
+	x(7, 0) = 0;
+	x(8, 0) = 0;
+	x(9, 0) = 0;
+	x(10, 0) = 0;
+	x(11, 0) = 0;
+	x(12, 0) = 0;
+	x(13, 0) = 0;
+	x(14, 0) = 0;
+	x(15, 0) = 0;
+	x(16, 0) = 0;
+	x(17, 0) = 0;
+	x(18, 0) = 0;
+	x(19, 0) = 0;
+	x(20, 0) = 0.0330;
+	x(21, 0) = 0.0627;
+	x(22, 0) = 0.1013;
+	x(23, 0) = 0.1394;
+	x(24, 0) = 0.1636;
+	
+	double sum = 0;
+	for (unsigned long i = 0; i < 25; i++) {
+		sum += x(i, 0);
+	}
+	for (unsigned long i = 0; i < 25; i++) {
+		x(i, 0) /= sum;
+	}
+	
+	
+	matrix<double> y(5, 1);
+	y(0, 0) = 1;
+	y(1, 0) = 0;
+	y(2, 0) = 0;
+	y(3, 0) = 0;
+	y(4, 0) = 1;
+	
+	sum = 0;
+	for (unsigned long i = 0; i < 5; i++) {
+		sum += y(i, 0);
+	}
+	for (unsigned long i = 0; i < 5; i++) {
+		y(i, 0) /= sum;
+	}
+	
+	cout << x << endl << y << endl;
+	
+	cout << var(x) << endl;
+	cout << var(y) << endl;
+	
+}
+
 void mexFunction(int nlhs, mxArray *plhs[],
                  int nrhs, const mxArray *prhs[])
 {
-	testWeights();
+	testVar();
+	
 }

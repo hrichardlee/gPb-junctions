@@ -1,9 +1,0 @@
-function out = rescale(in, p)
-
-out = in;
-nonzeros = out(out ~= 0);
-out = out - min(nonzeros);
-out = out / max(out(:));
-
-
-

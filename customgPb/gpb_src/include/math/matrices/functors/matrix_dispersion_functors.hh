@@ -137,12 +137,12 @@ public:
 		unsigned long dim = m._size;
 		
 		for (unsigned long i = 0; i < dim; i++) {
-			mean += static_cast<double>(m._data[i]) * static_cast<double>(i);
+			mean += static_cast<double>(m._data[i]) * (static_cast<double>(i) + 0.5);
 		}
 		
 		//now variance
 		for (unsigned long i = 0; i < dim; i++) {
-			double diff = static_cast<double>(i) - mean;
+			double diff = (static_cast<double>(i) + 0.5) - mean;
 			variance += static_cast<double>(m._data[i]) * diff * diff;
 		}
 		variance /= (dim - 1) * (dim - 1);

@@ -11,67 +11,80 @@ defpex = [
 
 
 pnames = {
-    'Lab weight', ...
-    'Positive channel weight' ...
-    'Eigenvector weight', ...
-    '# of slices', ...
-    '# of orientations in gpb', ...
-    'Radius', ...
-    'Min # of angles', ...
-    'Max # of angles', ...
-    'Radius for thresholding', ...
-    'Threshold', ...
-    'Lab homogeneity weight', ...
-    'Eigenvector homogeneity weight', ...
-    'Hole radius', ...
-    'Norm power' ...
+    'L weight', ...                         1
+    'ab weight', ...                        2
+    'Positive channel weight' ...           3
+    'Eigenvector weight', ...               4
+    'Texture weight', ...                   5
+    ...
+    'L homogeneity weight', ...             6
+    'ab homogeneity weight', ...            7
+    'Eigenvector homogeneity weight', ...   8
+    'Texture homgeneity weight', ...        9
+    ...
+    '# of slices', ...                      10
+    '# of orientations in gpb', ...         11
+    ...
+    'Radius', ...                           12
+    'Hole radius', ...                      13
+    ...
+    'Min # of angles', ...                  14
+    'Max # of angles', ...                  15
+    ...
+    'Radius for thresholding', ...          16
+    'Threshold', ...                        17
+    ...
+    'Norm power' ...                        18
     };
     
 
 defp = [
-    0.5    %1  Lab weight
-    0.25   %2  Positive channel weight
-    0.25   %3  Eigenvector weight
-    16     %4  number of slices
-    8      %5  number of orientations in positive channel orientation - don't change unless rerun gpb
-    12     %6  radius of support
-    3      %7  min number of angles
-    3      %8  max number of angles
-    4      %9  radius of support for calculating threshold
-    0.01   %10 threshold in positive channel for pursuing further computation
-    0      %11 Lab homogeneity weight
-    0      %12 Eigenvector homogeneity weight
-    0      %13 Inner radius of support (for hole in middle)
-    1      %14 power for summing diffs/edges/homogeneities
+    1      %1  L weight
+    0      %2  ab weight
+    0      %3  Positive channel weight
+    0      %4  Eigenvector weight
+    0      %5  Texture weight
+    
+    0      %6  L homog weight
+    0      %7  ab homog weight
+    0      %8  eigenvector homog weight
+    0      %9  texture homog weight
+    
+    16     %10 number of slices
+    8      %11 number of orientations in positive channel orientation - don't change unless rerun gpb
+    
+    12     %12 radius of support
+    0      %13 hole radius
+    
+    3      %14 min number of angles
+    3      %15 max number of angles
+    
+    4      %16 radius of support for calculating threshold
+    0.01   %17 threshold in positive channel for pursuing further computation
+    
+    1      %18 power for summing diffs/edges/homogeneities
     ]';
 
-p.pos = @(p) [0 1 0 p(4:end)];
-p.vect = @(p) [0 0 1 p(4:end)];
-p.lab = @(p) [1 0 0 p(4:end)];
-p.labpos = @(p) [0.5 0.5 0 p(4:end)];
+p.pos = @(p)    [0 0 1 0 0 0 0 0 0 p(10:end)];
+p.vect = @(p)   [0 0 0 1 0 0 0 0 0 p(10:end)];
+p.lab = @(p)    [0.5 0.5 0 0 0 0 0 0 0 p(10:end)];
+p.l = @(p)      [1 0 0 0 0 0 0 0 0 p(10:end)];
+p.ab = @(p)     [0 1 0 0 0 0 0 0 0 p(10:end)];
+p.text = @(p)   [0 0 0 0 1 0 0 0 0 p(10:end)];
 
+p.hlab = @(p)   [0 0 0 0 0 0.5 0.5 0 0 p(10:end)];
+p.hl = @(p)     [0 0 0 0 0 1 0 0 0 p(10:end)];
+p.hab = @(p)    [0 0 0 0 0 0 1 0 0 p(10:end)];
+p.hvect = @(p)  [0 0 0 0 0 0 0 1 0 p(10:end)];
 
-p.hlab = @(p) [p(1:10) 1 0 p(13:end)];
-p.hvect = @(p) [p(1:10) 0 1 p(13:end)];
-
-p.nodiff = @(p) [0 0 0 p(4:end)];
-p.nohomog = @(p) [p(1:10) 0 0];
-
-
-p.wide = @(p) [p(1:5) 24 p(7:end)];
-p.small = @(p) [p(1:5) 8 p(7:end)];
-
-p.d2 = @(p) [p(1:6) 2 2 p(9:end)];
-
-p.lowres = @(p) [p(1:3) 8 p(5:end)];
-
-p.pow = @(x, p) [p(1:13) x];
+p.wide = @(p) [p(1:11) 24 p(13:end)];
+p.small = @(p) [p(1:11) 8 p(13:end)];
 
 p.hole = @(x, p) [p(1:12) x p(14:end)];
 
+p.d2 = @(p) [p(1:13) 2 2 p(16:end)];
 
-
-p.id = @(p) p;
+p.pow = @(x, p) [p(1:17) x];
 
 
 
@@ -82,8 +95,8 @@ p.a1 = [
     p.pos(defp)
     p.vect(defp)
     
-    p.nodiff(p.hlab(defp))
-    p.nodiff(p.hvect(defp))
+    p.hlab(defp)
+    p.hvect(defp)
     
     p.lab(p.wide(defp))
     p.pos(p.wide(defp))
@@ -109,7 +122,7 @@ p.a1 = [
 pex.a1 = repmat(defp, [size(p.a1, 1), 1]);
     
     
-    
+
     
     
     

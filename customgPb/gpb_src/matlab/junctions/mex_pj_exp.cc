@@ -180,6 +180,11 @@ void mexFunction(int nlhs, mxArray *plhs[],
 		return;
 	}
 	
+	
+	cout << "hey there" << endl;
+	double x;
+	std::cin >> x;
+	
 	//INPUT PARAMETERS
 	//should actually come in as rgb, will get converted to Lab real soon
 	t_auto_1d_matrices lab_p = to_matrices(prhs[0]);
@@ -191,69 +196,43 @@ void mexFunction(int nlhs, mxArray *plhs[],
 	
 	//parameters for compute_pj
 	double *in_params = mxGetPr(prhs[4]);
-	if (mxGetNumberOfElements(prhs[4]) != 14) {
-		cout << "There should be 14 params" << endl;
+	if (mxGetNumberOfElements(prhs[4]) != 18) {
+		cout << "There should be 18 params" << endl;
 		return;
 	}
-	double labweight = in_params[0];
-	double pos_channel_weight = in_params[1];
-	double eigvectweight = in_params[2];
+	double l_weight = in_params[0];
+	double ab_weight = in_params[1];
+	double pos_channel_weight = in_params[2];
+	double eigvect_weight = in_params[3];
+	double text_weight = in_params[4];
 	
-	unsigned long n_slices = static_cast<unsigned long>(in_params[3]);
-	unsigned long n_oris_gpb = static_cast<unsigned long>(in_params[4]);
-	unsigned long rad_support = static_cast<unsigned long>(in_params[5]);
-	unsigned long min_n_angles = static_cast<unsigned long>(in_params[6]);
-	unsigned long max_n_angles = static_cast<unsigned long>(in_params[7]);
-	//threshold parameters
-	unsigned long threshold_rad_support = static_cast<unsigned long>(in_params[8]);
-	double pos_channel_threshold = in_params[9];
-	double labhomogweight = in_params[10];
-	double eigvecthomogweight = in_params[11];
+	double l_homog_weight = in_params[5];
+	double ab_homog_weight = in_params[6];
+	double eigvect_homog_weight = in_params[7];
+	double text_homog_weight = in_params[8];
+	
+	unsigned long n_slices = static_cast<unsigned long>(in_params[9]);
+	unsigned long n_oris_gpb = static_cast<unsigned long>(in_params[10]);
+	unsigned long rad_support = static_cast<unsigned long>(in_params[11]);
 	double rad_inner_support = in_params[12];
-	double norm_power = in_params[13];
+	unsigned long min_n_angles = static_cast<unsigned long>(in_params[13]);
+	unsigned long max_n_angles = static_cast<unsigned long>(in_params[14]);
+	//threshold parameters
+	unsigned long threshold_rad_support = static_cast<unsigned long>(in_params[15]);
+	double pos_channel_threshold = in_params[16];
+	double norm_power = in_params[17];
 	
-	//eigvects (do this after params because we need threshold weight)
-	t_auto_1d_matrices eigvects;
-	unsigned long num_eigvects = 0;
-	if (mxGetNumberOfDimensions(prhs[3]) != 3 || 
-		(eigvectweight <= 1e-9 && eigvecthomogweight <= 1e-9)) {
-		cout << "ignoring eigvects" << endl;
-	} else {
-		eigvects = to_matrices(prhs[3]);
-		num_eigvects = eigvects->size();
-	}
 	
-	//see if we are going to use lab channel
-	unsigned long num_labchan = 3;
-	if (labweight <= 1e-9 && labhomogweight <= 1e-9) {
-		cout << "ignoring lab" << endl;
-		num_labchan = 0;
-	}
 	
-	//compute channel weights from given parameters
-	unsigned long total_channels = num_labchan + num_eigvects;
-	array<double> channel_weights(total_channels);
-	array<double> homog_weights(total_channels);
-	{
-		unsigned long curr_channel = 0;
-		for (unsigned long i = 0; i < num_labchan; i++) {
-			channel_weights[curr_channel] = 1.0 / num_labchan * labweight;
-			homog_weights[curr_channel] = 1.0 / num_labchan * labhomogweight;
-			curr_channel++;
-		}
-		for (unsigned long i = 0; i < num_eigvects; i++) {
-			channel_weights[curr_channel] = 1.0 / num_eigvects * eigvectweight;
-			homog_weights[curr_channel] = 1.0 / num_eigvects * eigvecthomogweight;
-			curr_channel++;
-		}
-	}
 	
-	//parameters binning & smoothing, not really going to change
+	//STATIC PARAMETERS
+	//parameters for binning & smoothing, not really going to change
 	unsigned long num_bins  = 25;                    /* # bins for bg */
 	double bg_smooth_sigma = 0.1;
 	double cg_smooth_sigma = 0.05;
 	double sigma_tg_filt_sm = 2.0;
 	double sigma_tg_filt_lg = math::sqrt(2) * 2.0;
+	unsigned long num_textons = num_bins; //used to be 64.... but would require big changes
 	
 	unsigned long n_ori = 8;	//for textons TODO different?
 	
@@ -265,7 +244,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
 	unsigned long im_size_x = poschan.size(0);
 	unsigned long im_size_y = poschan.size(1);
 	
-	//TODO mirror border
+	
 	
 	// IMAGE PROCESSING
 	//convert to grayscale
@@ -276,6 +255,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
 	lib_image::rgb_to_lab(lab[0], lab[1], lab[2]);
 	lib_image::lab_normalize(lab[0], lab[1], lab[2]);
 	
+	//for texture channel
 	//compute filter set
 	auto_collection< matrix<>, array_list< matrix<> > > filters_small = 
          lib_image::texton_filters(n_ori, sigma_tg_filt_sm);
@@ -285,33 +265,115 @@ void mexFunction(int nlhs, mxArray *plhs[],
     filters.add(*filters_small);
     filters.add(*filters_large);
     //compute textons
-    //auto_collection< matrix<>, array_list< matrix<> > > textons;
-    //matrix<unsigned long> t_assign = lib_image::textons(
-    //     gray, filters, textons, 64);
+    auto_collection< matrix<>, array_list< matrix<> > > textons;
+    matrix<unsigned long> t_assign = lib_image::textons(
+         gray, filters, textons, num_textons);
+         
+         
 	
-	// BUILD PARAMETERS FOR PJ
-	//accumulate normal channels
+    //GET EIGENVECTORS
+	//eigvects (do this after params because we need threshold weight)
+	t_auto_1d_matrices eigvects;
+	unsigned long num_eigvects = 0;
+	if (mxGetNumberOfDimensions(prhs[3]) != 3) {
+		cout << "eigvects incorrect" << endl;
+		eigvect_weight = eigvect_homog_weight = 0;
+	} else {
+		eigvects = to_matrices(prhs[3]);
+		num_eigvects = eigvects->size();
+	}
+         
+	//COMPILE CHANNELS AND WEIGHTS
+	//channels
 	t_auto_1dul_matrices channels_p(new t_1dul_matrices());
 	t_1dul_matrices &channels = *channels_p;
 	
-	auto_ptr<matrix<unsigned long> > toadd_ul;
+	//channel weights
+	array<double> channel_weights(num_eigvects + 4);
+	array<double> homog_weights(num_eigvects + 4);
+
+	unsigned long total_channels = 0;	
+	
+	auto_ptr<matrix<unsigned long> > toadd_ul; //temp variable for converting
 	
 	//L, a, b channels, only add if weight is positive
-	for (unsigned long i = 0; i < num_labchan; i++) {
+	if (l_weight < 1e-9 && l_homog_weight < 1e-9) {
+		cout << "Ignoring L" << endl;
+	} else {
 		toadd_ul.reset(new matrix<unsigned long>());
-		*toadd_ul = lib_image::quantize_values(lab[i], num_bins);
+		*toadd_ul = lib_image::quantize_values(lab[0], num_bins);
 		channels.add(*toadd_ul);
 		toadd_ul.release();
+		
+		channel_weights(total_channels) = l_weight;
+		homog_weights(total_channels) = l_homog_weight;
+		
+		total_channels++;
 	}
 	
-	//eigen vector channels, only add if weight is positive
-	for (unsigned long i = 0; i < num_eigvects; i++) {
+	if (ab_weight < 1e-9 && ab_homog_weight < 1e-9) {
+		cout << "Ignoring ab" << endl;
+	} else {
 		toadd_ul.reset(new matrix<unsigned long>());
-		*toadd_ul = lib_image::quantize_values((*eigvects)[i], num_bins);
+		*toadd_ul = lib_image::quantize_values(lab[1], num_bins);
 		channels.add(*toadd_ul);
 		toadd_ul.release();
+		
+		channel_weights(total_channels) = ab_weight / 2;
+		homog_weights(total_channels) = ab_homog_weight / 2;
+		
+		total_channels++;
+		
+		toadd_ul.reset(new matrix<unsigned long>());
+		*toadd_ul = lib_image::quantize_values(lab[2], num_bins);
+		channels.add(*toadd_ul);
+		toadd_ul.release();
+		
+		channel_weights(total_channels) = ab_weight / 2;
+		homog_weights(total_channels) = ab_homog_weight / 2;
+		
+		total_channels++;
 	}
 	
+	//texture channel
+	if (text_weight < 1e-9 && text_homog_weight < 1e-9) {
+		cout << "ignoring texture" << endl;
+	} else {
+		toadd_ul.reset(new matrix<unsigned long>(t_assign));
+		channels.add(*toadd_ul);
+		toadd_ul.release();
+	
+		channel_weights(total_channels) = text_weight;
+		homog_weights(total_channels) = text_homog_weight;
+		
+		total_channels++;
+	}
+	
+	//eigenvector channels
+	if (eigvect_weight < 1e-9 && eigvect_homog_weight < 1e-9) {
+		cout << "Ignoring eigvects" << endl;
+	} else {
+		//eigen vector channels, only add if weight is positive
+		for (unsigned long i = 0; i < num_eigvects; i++) {
+			toadd_ul.reset(new matrix<unsigned long>());
+			*toadd_ul = lib_image::quantize_values((*eigvects)[i], num_bins);
+			channels.add(*toadd_ul);
+			toadd_ul.release();
+			
+			channel_weights(total_channels) = eigvect_weight / num_eigvects;
+			homog_weights(total_channels) = eigvect_homog_weight / num_eigvects;
+			
+			total_channels++;
+		}
+	}
+	
+	//resize parameters to correct size
+	channel_weights.resize(total_channels);
+	homog_weights.resize(total_channels);
+	
+	//TODO mirror border
+	
+	// BUILD OUTPUT PARAMETERS FOR PJ
 	//outputs... TODO assume all are same
 	matrix<> pjs(im_size_x, im_size_y);
 	matrix< array<double> > jangles(im_size_x, im_size_y);
@@ -338,7 +400,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
 		static_cast<int>(im_size_y));
 	unsigned long i = 0;
 	for (unsigned long y = 0; y < im_size_y; y++) {
-	for (unsigned long x = 0; x < im_size_x; x++) {
+		for (unsigned long x = 0; x < im_size_x; x++) {
 			int n_angles = static_cast<int>(jangles(x, y).size());
 			mxArray *a = mxCreateDoubleMatrix(1, n_angles, mxREAL);
 			double *data = mxGetPr(a);
