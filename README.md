@@ -1,6 +1,6 @@
 #gPb-junctions
 
-This is the code for my undergraduate thesis: Detecting Junctions in Photographs of Objects (April 2011)
+This is the code for my undergraduate thesis: Detecting Junctions in Photographs of Objects (April 2011), available at http://hrichardlee.github.io/DetectingJunctionsLee.pdf.
 
 ##Abstract
 Line drawings are inherently simple, yet retain most of the information of a full image. This suggest that line drawings, also called contour images, could be useful as an intermediate representation for computer understanding of images. However, extracting physically meaningful contours from photographs has proved to be diffcult. Recently, there has been significant progress in detecting contours. As one example, the gPb algorithm (Arbeláez et al., 2010) uses local cues such as brightness, color, and texture, along with global cues that interpret the image as a whole in order to achieve high-performance contour detection.
